@@ -42,7 +42,6 @@ fn main() {
                             title: Some("XSSH".into()),
                             appears_transparent: true,
                             traffic_light_position: Some(point(px(12.), px(11.))),
-                            ..Default::default()
                         }),
                         ..Default::default()
                     },

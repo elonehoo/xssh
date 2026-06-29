@@ -35,9 +35,3 @@ pub(super) struct NewServer<'a> {
     pub(super) authentication: &'a str,
     pub(super) password: &'a str,
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ActiveTab {
-    Vault,
-    Server(i32),
-}

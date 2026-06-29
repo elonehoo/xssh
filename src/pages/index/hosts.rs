@@ -2,11 +2,11 @@ use gpui::{Context, Entity, IntoElement, SharedString, div, prelude::*, px, rela
 use gpui_component::input::Input;
 
 use crate::{
-    ipc::{ActiveTab, ServerResource},
+    ipc::ServerResource,
     ui::{BASE_FONT_SIZE, TextKey, icons},
 };
 
-use super::Xssh;
+use super::{Xssh, tabs::ActiveTab};
 
 impl Xssh {
     pub(in crate::pages::index) fn host_card(
@@ -59,10 +59,10 @@ impl Xssh {
                     .bg(rgb(palette.panel_hover))
                     .border_color(rgb(palette.card_active_border))
             })
-            .on_click(move |_, _, cx| {
+            .on_click(move |_, window, cx| {
                 let server = server_for_click.clone();
                 view_for_click.update(cx, |this, cx| {
-                    this.open_server_tab(server, cx);
+                    this.connect_server(server, window, cx);
                 });
             })
             .child(Self::server_icon(self.theme))
@@ -89,11 +89,11 @@ impl Xssh {
                         self.theme,
                         SharedString::from(format!("connect-host-{}", server.id)),
                         icons::connect::icon(15., palette.text),
-                        move |_, _, cx| {
+                        move |_, window, cx| {
                             cx.stop_propagation();
                             let server = server_for_link.clone();
                             view_for_link.update(cx, |this, cx| {
-                                this.open_server_tab(server, cx);
+                                this.connect_server(server, window, cx);
                             });
                         },
                     ))
@@ -198,7 +198,7 @@ impl Xssh {
                                 "terminal-button",
                                 language.tr(TextKey::Terminal),
                                 cx,
-                                Self::on_open_first_server,
+                                Self::on_open_local_terminal,
                             )),
                     )
                     .child(

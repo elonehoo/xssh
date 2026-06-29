@@ -4,21 +4,29 @@ mod connection;
 mod controls;
 mod hosts;
 mod render;
+mod tabs;
+mod terminal;
 mod windows;
+
+use std::collections::HashMap;
 
 use diesel::sqlite::SqliteConnection;
 use gpui::{Context, Entity, FocusHandle, Subscription, Window, WindowHandle, prelude::*};
 use gpui_component::{Root, input::InputState};
 
 use crate::{
-    ipc::{ActiveTab, ServerResource, load_servers, open_database},
+    ipc::{ServerResource, load_servers, open_database},
     ui::{Language, TextKey, ThemeMode},
 };
+
+use tabs::{ActiveTab, OpenTab, TerminalId};
+use terminal::TerminalSession;
 
 pub(crate) struct Xssh {
     connection: SqliteConnection,
     servers: Vec<ServerResource>,
-    open_tabs: Vec<ServerResource>,
+    open_tabs: Vec<OpenTab>,
+    terminal_sessions: HashMap<TerminalId, TerminalSession>,
     active_tab: ActiveTab,
     language: Language,
     theme: ThemeMode,
@@ -44,6 +52,7 @@ impl Xssh {
             connection,
             servers,
             open_tabs: Vec::new(),
+            terminal_sessions: HashMap::new(),
             active_tab: ActiveTab::Vault,
             language,
             theme,

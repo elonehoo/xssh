@@ -3,11 +3,14 @@ use gpui::{ClickEvent, Context, Window, WindowHandle};
 use gpui_component::Root;
 
 use crate::{
-    ipc::{ActiveTab, ServerDraft, ServerResource, delete_server, insert_server, update_server},
+    ipc::{ServerDraft, ServerResource, delete_server, insert_server, update_server},
     ui::{Language, TextKey, ThemeMode},
 };
 
-use super::Xssh;
+use super::{
+    Xssh,
+    tabs::{ActiveTab, OpenTab, TerminalId},
+};
 
 impl Xssh {
     pub(in crate::pages::index) fn activate_singleton_window(
@@ -60,12 +63,12 @@ impl Xssh {
             self.servers.insert(0, updated.clone());
         }
 
-        for tab in self
-            .open_tabs
-            .iter_mut()
-            .filter(|server| server.id == server_id)
-        {
-            *tab = updated.clone();
+        for tab in &mut self.open_tabs {
+            if let OpenTab::Server(server) = tab
+                && server.id == server_id
+            {
+                *server = updated.clone();
+            }
         }
 
         cx.notify();
@@ -79,11 +82,13 @@ impl Xssh {
     ) -> Result<()> {
         delete_server(&mut self.connection, server_id)?;
 
+        self.remove_terminal_session(TerminalId::Server(server_id));
         self.servers.retain(|server| server.id != server_id);
-        self.open_tabs.retain(|server| server.id != server_id);
+        self.open_tabs
+            .retain(|tab| tab.server_id() != Some(server_id));
 
         if self.active_tab == ActiveTab::Server(server_id) {
-            self.active_tab = ActiveTab::Vault;
+            self.active_tab = self.next_available_tab();
         }
 
         cx.notify();
@@ -118,29 +123,93 @@ impl Xssh {
         cx.notify();
     }
 
-    pub(in crate::pages::index) fn on_open_first_server(
+    pub(in crate::pages::index) fn on_open_local_terminal(
         &mut self,
         _: &ClickEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(server) = self.servers.first().cloned() {
-            self.open_server_tab(server, cx);
-        } else {
-            cx.notify();
-        }
+        self.open_local_terminal_tab(window, cx);
     }
 
-    pub(in crate::pages::index) fn open_server_tab(
+    pub(in crate::pages::index) fn connect_server(
         &mut self,
         server: ServerResource,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.open_tabs.iter().any(|tab| tab.id == server.id) {
-            self.open_tabs.push(server.clone());
+        self.open_server_tab(server.clone());
+        self.ensure_terminal_session(TerminalId::Server(server.id));
+        window.focus(&self.focus_handle);
+        self.start_terminal_connection(server, cx);
+    }
+
+    pub(in crate::pages::index) fn open_local_terminal_tab(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .open_tabs
+            .iter()
+            .any(|tab| matches!(tab, OpenTab::LocalTerminal))
+        {
+            self.open_tabs.push(OpenTab::LocalTerminal);
+        }
+
+        self.active_tab = ActiveTab::LocalTerminal;
+        self.ensure_terminal_session(TerminalId::Local);
+        window.focus(&self.focus_handle);
+        self.start_local_terminal_connection(cx);
+        cx.notify();
+    }
+
+    pub(in crate::pages::index) fn close_local_terminal_tab(&mut self, cx: &mut Context<Self>) {
+        self.remove_terminal_session(TerminalId::Local);
+        self.open_tabs
+            .retain(|tab| !matches!(tab, OpenTab::LocalTerminal));
+
+        if self.active_tab == ActiveTab::LocalTerminal {
+            self.active_tab = self.next_available_tab();
+        }
+
+        cx.notify();
+    }
+
+    pub(in crate::pages::index) fn close_server_tab(
+        &mut self,
+        server_id: i32,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_terminal_session(TerminalId::Server(server_id));
+        self.open_tabs
+            .retain(|tab| tab.server_id() != Some(server_id));
+
+        if self.active_tab == ActiveTab::Server(server_id) {
+            self.active_tab = self.next_available_tab();
+        }
+
+        cx.notify();
+    }
+
+    pub(in crate::pages::index) fn open_server_tab(&mut self, server: ServerResource) {
+        if let Some(OpenTab::Server(existing)) = self
+            .open_tabs
+            .iter_mut()
+            .find(|tab| tab.server_id() == Some(server.id))
+        {
+            *existing = server.clone();
+        } else {
+            self.open_tabs.push(OpenTab::Server(server.clone()));
         }
 
         self.active_tab = ActiveTab::Server(server.id);
-        cx.notify();
+    }
+
+    fn next_available_tab(&self) -> ActiveTab {
+        self.open_tabs
+            .last()
+            .map(OpenTab::active_tab)
+            .unwrap_or(ActiveTab::Vault)
     }
 }

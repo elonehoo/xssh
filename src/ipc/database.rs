@@ -6,9 +6,19 @@ use diesel::{Connection, sqlite::SqliteConnection};
 use super::migrations::migrate_database;
 
 fn database_path() -> Result<PathBuf> {
-    Ok(std::env::current_dir()
-        .context("读取当前目录失败")?
-        .join("xssh.sqlite3"))
+    if let Some(path) = std::env::var_os("XSSH_DATABASE_PATH") {
+        return Ok(PathBuf::from(path));
+    }
+
+    let home = std::env::var_os("HOME").ok_or_else(|| anyhow!("读取 HOME 目录失败"))?;
+    let directory = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("XSSH");
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("创建 SQLite 数据目录失败: {}", directory.display()))?;
+
+    Ok(directory.join("xssh.sqlite3"))
 }
 
 pub(crate) fn open_database() -> Result<(PathBuf, SqliteConnection)> {

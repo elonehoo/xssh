@@ -1,6 +1,7 @@
 use gpui::{IntoElement, prelude::*, px, rgb, svg};
 
 pub(crate) mod add;
+pub(crate) mod close;
 pub(crate) mod connect;
 pub(crate) mod delete;
 pub(crate) mod edit;
@@ -24,6 +25,7 @@ pub(crate) const ASSETS: &[IconAsset] = &[
     vault::ASSET,
     sort_newest::ASSET,
     server::ASSET,
+    close::ASSET,
     connect::ASSET,
     edit::ASSET,
     delete::ASSET,

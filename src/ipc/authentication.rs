@@ -1,7 +1,5 @@
 use gpui_component::IndexPath;
 
-use crate::ui::{Language, TextKey};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AuthenticationMode {
     ManualPassword,
@@ -20,13 +18,6 @@ impl AuthenticationMode {
         match label {
             "Direct key" | "直接密钥" | "直接キー" => Self::DirectKey,
             _ => Self::ManualPassword,
-        }
-    }
-
-    pub(crate) fn display_label(self, language: Language) -> &'static str {
-        match self {
-            Self::ManualPassword => language.tr(TextKey::ManualPassword),
-            Self::DirectKey => language.tr(TextKey::DirectKey),
         }
     }
 

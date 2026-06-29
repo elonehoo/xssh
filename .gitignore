@@ -1,4 +1,5 @@
 /target/
+/dist/
 /xssh.sqlite3
 *.sqlite3
 *.db

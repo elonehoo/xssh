@@ -2,6 +2,17 @@
 name = "xssh"
 version = "0.0.1"
 edition = "2024"
+description = "A Rust and GPUI SSH client."
+
+[package.metadata.bundle]
+name = "XSSH"
+identifier = "com.elonehoo.xssh"
+icon = ["assets/app-icon/app-icon.icns"]
+category = "public.app-category.developer-tools"
+short_description = "A Rust and GPUI SSH client."
+long_description = """
+XSSH is a desktop SSH client built with Rust, GPUI, and SQLite-backed host storage.
+"""
 
 [dependencies]
 anyhow = "1.0.98"
@@ -10,3 +21,6 @@ diesel_migrations = { version = "2.3.2", features = ["sqlite"] }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
 libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
+portable-pty = "0.9.0"
+ssh2 = "0.9.5"
+vt100 = "0.16.2"
