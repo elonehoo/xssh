@@ -1,0 +1,12 @@
+[package]
+name = "xssh"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+diesel = { version = "2.3.10", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = { version = "2.3.2", features = ["sqlite"] }
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }

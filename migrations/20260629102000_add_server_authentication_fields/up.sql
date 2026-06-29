@@ -1,0 +1,5 @@
+ALTER TABLE servers
+ADD COLUMN authentication TEXT NOT NULL DEFAULT 'Password';
+
+ALTER TABLE servers
+ADD COLUMN password TEXT NOT NULL DEFAULT '';

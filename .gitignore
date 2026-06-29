@@ -1,0 +1,7 @@
+/target/
+/xssh.sqlite3
+*.sqlite3
+*.db
+.DS_Store
+.specstory/
+.vscode/

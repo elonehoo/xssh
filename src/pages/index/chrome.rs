@@ -1,0 +1,199 @@
+use gpui::{
+    Context, Entity, IntoElement, SharedString, WindowControlArea, div, prelude::*, px, rgb,
+};
+
+use crate::{
+    ipc::ActiveTab,
+    ui::{BASE_FONT_SIZE, TextKey, ThemeMode, icons},
+};
+
+use super::XsshDemo;
+
+impl XsshDemo {
+    pub(in crate::pages::index) fn title_tab(
+        &self,
+        server_id: i32,
+        label: String,
+        active: bool,
+        view: Entity<Self>,
+    ) -> impl IntoElement {
+        let palette = self.theme.palette();
+
+        div()
+            .id(SharedString::from(format!("tab-{label}")))
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(26.))
+            .px_2()
+            .rounded_sm()
+            .bg(if active {
+                rgb(palette.tab_active)
+            } else {
+                rgb(palette.tab_inactive)
+            })
+            .text_size(px(13.))
+            .text_color(if active {
+                rgb(palette.text)
+            } else {
+                rgb(palette.muted)
+            })
+            .child(Self::server_icon(self.theme).into_any_element())
+            .child(label)
+            .hover(move |style| style.bg(rgb(palette.panel_hover)))
+            .on_click(move |_, _, cx| {
+                view.update(cx, |this, cx| {
+                    this.active_tab = ActiveTab::Server(server_id);
+                    cx.notify();
+                });
+            })
+    }
+
+    pub(in crate::pages::index) fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let view = cx.entity();
+        let language = self.language;
+        let palette = self.theme.palette();
+        let server_tabs = self
+            .open_tabs
+            .clone()
+            .into_iter()
+            .map(|server| {
+                let active = self.active_tab == ActiveTab::Server(server.id);
+                self.title_tab(server.id, server.name, active, view.clone())
+            })
+            .collect::<Vec<_>>();
+
+        div()
+            .flex()
+            .items_center()
+            .h(px(36.))
+            .w_full()
+            .pl(px(92.))
+            .pr_3()
+            .gap_2()
+            .bg(rgb(palette.titlebar_bg))
+            .border_b_1()
+            .border_color(rgb(palette.border))
+            .child(
+                div()
+                    .id("vault-tab")
+                    .flex()
+                    .items_center()
+                    .h(px(24.))
+                    .px_2()
+                    .rounded_sm()
+                    .bg(if self.active_tab == ActiveTab::Vault {
+                        rgb(palette.tab_active)
+                    } else {
+                        rgb(palette.tab_inactive)
+                    })
+                    .gap_1()
+                    .text_size(px(13.))
+                    .text_color(rgb(palette.text))
+                    .child(icons::vault::icon(15., palette.text))
+                    .child(language.tr(TextKey::Vault))
+                    .hover(move |style| style.bg(rgb(palette.tab_active)))
+                    .on_click(cx.listener(Self::on_vault_tab)),
+            )
+            .child(
+                div()
+                    .h(px(18.))
+                    .w(px(1.))
+                    .bg(rgb(palette.border))
+                    .opacity(0.65),
+            )
+            .children(server_tabs)
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .window_control_area(WindowControlArea::Drag),
+            )
+    }
+
+    pub(in crate::pages::index) fn sidebar_item(
+        theme: ThemeMode,
+        label: &'static str,
+        active: bool,
+    ) -> impl IntoElement {
+        let palette = theme.palette();
+
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .h(px(32.))
+            .px_4()
+            .rounded_md()
+            .bg(if active {
+                rgb(palette.panel_hover)
+            } else {
+                rgb(palette.sidebar_bg)
+            })
+            .text_color(if active {
+                rgb(palette.text)
+            } else {
+                rgb(palette.muted)
+            })
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(20.))
+                    .child(icons::server::icon(
+                        18.,
+                        if active { palette.text } else { palette.muted },
+                    )),
+            )
+            .child(div().text_size(px(BASE_FONT_SIZE)).child(label))
+    }
+
+    pub(in crate::pages::index) fn settings_button(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let palette = self.theme.palette();
+
+        div()
+            .id("settings-sidebar-button")
+            .flex()
+            .items_center()
+            .gap_3()
+            .h(px(32.))
+            .px_3()
+            .rounded_md()
+            .text_size(px(BASE_FONT_SIZE))
+            .text_color(rgb(palette.muted))
+            .child(icons::settings::icon(18., palette.muted))
+            .child(self.language.tr(TextKey::Settings))
+            .hover(move |style| {
+                style
+                    .bg(rgb(palette.panel_hover))
+                    .text_color(rgb(palette.text))
+            })
+            .on_click(cx.listener(Self::on_open_settings_window))
+    }
+
+    pub(in crate::pages::index) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = self.theme.palette();
+
+        div()
+            .flex()
+            .flex_col()
+            .w(px(280.))
+            .h_full()
+            .p_3()
+            .bg(rgb(palette.sidebar_bg))
+            .border_r_1()
+            .border_color(rgb(palette.border))
+            .child(Self::sidebar_item(
+                self.theme,
+                self.language.tr(TextKey::Hosts),
+                true,
+            ))
+            .child(div().flex_1())
+            .child(div().h(px(1.)).w_full().bg(rgb(palette.separator)))
+            .child(div().pt_3().child(self.settings_button(cx)))
+    }
+}
