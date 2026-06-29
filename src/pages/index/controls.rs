@@ -5,6 +5,7 @@ use gpui::{
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
+    tooltip::Tooltip,
 };
 
 use crate::ui::{BASE_FONT_SIZE, ThemeMode, icons};
@@ -157,10 +158,12 @@ impl Xssh {
     pub(in crate::pages::index) fn host_action_button(
         theme: ThemeMode,
         id: SharedString,
+        tooltip: &'static str,
         icon: impl IntoElement,
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let palette = theme.palette();
+        let tooltip = SharedString::from(tooltip);
 
         div()
             .id(id)
@@ -178,6 +181,7 @@ impl Xssh {
                     .bg(rgb(palette.panel_hover))
                     .border_color(rgb(palette.card_active_border))
             })
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
             .on_click(on_click)
     }
 }

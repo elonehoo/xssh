@@ -1,16 +1,23 @@
+use std::{sync::mpsc::TryRecvError, time::Duration};
+
 use anyhow::Result;
-use gpui::{ClickEvent, Context, Window, WindowHandle};
-use gpui_component::Root;
+use gpui::{ClickEvent, Context, Timer, Window, WindowHandle};
+use gpui_component::{Root, WindowExt, notification::NotificationType};
 
 use crate::{
-    ipc::{ServerDraft, ServerResource, delete_server, insert_server, update_server},
-    ui::{Language, TextKey, ThemeMode},
+    ipc::{
+        ServerConnectionDraft, ServerDraft, ServerResource, delete_server, insert_server,
+        spawn_ssh_connection_test, update_server,
+    },
+    ui::{Language, TextKey, ThemeMode, status_notification},
 };
 
 use super::{
-    Xssh,
+    HostConnectionTestTarget, Xssh,
     tabs::{ActiveTab, OpenTab, TerminalId},
 };
+
+struct HostConnectionTestNotification;
 
 impl Xssh {
     pub(in crate::pages::index) fn activate_singleton_window(
@@ -82,6 +89,7 @@ impl Xssh {
     ) -> Result<()> {
         delete_server(&mut self.connection, server_id)?;
 
+        self.host_connection_test_receivers.remove(&server_id);
         self.remove_terminal_session(TerminalId::Server(server_id));
         self.servers.retain(|server| server.id != server_id);
         self.open_tabs
@@ -144,6 +152,52 @@ impl Xssh {
         self.start_terminal_connection(server, cx);
     }
 
+    pub(in crate::pages::index) fn test_server_connection(
+        &mut self,
+        server: ServerResource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft = match ServerConnectionDraft::try_from(&server) {
+            Ok(draft) => draft,
+            Err(error) => {
+                window.push_notification(
+                    status_notification(
+                        self.host_connection_test_failed_message(&server.name, &error.to_string()),
+                        NotificationType::Error,
+                        cx,
+                    )
+                    .id1::<HostConnectionTestNotification>(server.id),
+                    cx,
+                );
+                return;
+            }
+        };
+
+        let server_id = server.id;
+        self.host_connection_test_receivers.insert(
+            server_id,
+            spawn_ssh_connection_test(
+                draft,
+                HostConnectionTestTarget {
+                    server_id,
+                    server_name: server.name.clone(),
+                },
+            ),
+        );
+        window.push_notification(
+            status_notification(
+                self.host_connection_test_running_message(&server),
+                NotificationType::Info,
+                cx,
+            )
+            .id1::<HostConnectionTestNotification>(server.id),
+            cx,
+        );
+
+        self.spawn_host_connection_test_poller(window, cx);
+    }
+
     pub(in crate::pages::index) fn open_local_terminal_tab(
         &mut self,
         window: &mut Window,
@@ -204,6 +258,128 @@ impl Xssh {
         }
 
         self.active_tab = ActiveTab::Server(server.id);
+    }
+
+    fn spawn_host_connection_test_poller(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, window| {
+            loop {
+                Timer::after(Duration::from_millis(100)).await;
+
+                let keep_polling = this
+                    .update_in(window, |this, window, cx| {
+                        this.poll_host_connection_test_results(window, cx)
+                    })
+                    .unwrap_or(false);
+
+                if !keep_polling {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn poll_host_connection_test_results(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut pending = false;
+        let mut completed = Vec::new();
+        let mut disconnected = Vec::new();
+
+        for (server_id, rx) in &self.host_connection_test_receivers {
+            match rx.try_recv() {
+                Ok(result) => completed.push((*server_id, result)),
+                Err(TryRecvError::Empty) => pending = true,
+                Err(TryRecvError::Disconnected) => disconnected.push(*server_id),
+            }
+        }
+
+        for (server_id, result) in completed {
+            self.host_connection_test_receivers.remove(&server_id);
+            self.push_host_connection_test_result(result, window, cx);
+        }
+
+        for server_id in disconnected {
+            self.host_connection_test_receivers.remove(&server_id);
+            window.push_notification(
+                status_notification(
+                    self.host_connection_test_no_result_message(),
+                    NotificationType::Error,
+                    cx,
+                )
+                .id1::<HostConnectionTestNotification>(server_id),
+                cx,
+            );
+        }
+
+        pending
+    }
+
+    fn push_host_connection_test_result(
+        &self,
+        result: crate::ipc::SshConnectionTestResult<HostConnectionTestTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = result.context;
+        let notification = match result.result {
+            Ok(()) => status_notification(
+                self.host_connection_test_succeeded_message(&target.server_name),
+                NotificationType::Success,
+                cx,
+            ),
+            Err(error) => status_notification(
+                self.host_connection_test_failed_message(&target.server_name, &error),
+                NotificationType::Error,
+                cx,
+            ),
+        }
+        .id1::<HostConnectionTestNotification>(target.server_id);
+
+        window.push_notification(notification, cx);
+    }
+
+    fn host_connection_test_running_message(&self, server: &ServerResource) -> String {
+        match self.language {
+            Language::Zh => format!(
+                "正在测试连接：{}@{}:{}",
+                server.username, server.host, server.port
+            ),
+            Language::En => format!(
+                "Testing connection: {}@{}:{}",
+                server.username, server.host, server.port
+            ),
+            Language::Ja => format!(
+                "接続をテスト中: {}@{}:{}",
+                server.username, server.host, server.port
+            ),
+        }
+    }
+
+    fn host_connection_test_succeeded_message(&self, server_name: &str) -> String {
+        match self.language {
+            Language::Zh => format!("{server_name} 连接测试成功。"),
+            Language::En => format!("{server_name} connection test succeeded."),
+            Language::Ja => format!("{server_name} の接続テストに成功しました。"),
+        }
+    }
+
+    fn host_connection_test_failed_message(&self, server_name: &str, error: &str) -> String {
+        match self.language {
+            Language::Zh => format!("{server_name} 连接测试失败：{error}"),
+            Language::En => format!("{server_name} connection test failed: {error}"),
+            Language::Ja => format!("{server_name} の接続テストに失敗しました: {error}"),
+        }
+    }
+
+    fn host_connection_test_no_result_message(&self) -> &'static str {
+        match self.language {
+            Language::Zh => "连接测试失败：没有返回结果",
+            Language::En => "Connection test failed: no result returned",
+            Language::Ja => "接続テストに失敗しました: 結果が返りませんでした",
+        }
     }
 
     fn next_available_tab(&self) -> ActiveTab {

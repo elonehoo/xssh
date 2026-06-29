@@ -1,7 +1,7 @@
 use std::{
     env,
     io::{ErrorKind, Read, Write},
-    net::TcpStream,
+    net::{TcpStream, ToSocketAddrs},
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread,
     time::Duration,
@@ -11,7 +11,9 @@ use anyhow::{Context as AnyhowContext, Result, anyhow};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use ssh2::Session;
 
-use super::{AuthenticationMode, ServerResource};
+use super::{AuthenticationMode, ServerConnectionDraft, ServerResource, SshConnectionTestResult};
+
+const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) enum TerminalCommand {
     Input(Vec<u8>),
@@ -55,6 +57,33 @@ pub(crate) fn open_local_terminal(cols: u16, rows: u16) -> TerminalHandle {
     });
 
     TerminalHandle { input, events }
+}
+
+pub(crate) fn test_ssh_connection(connection: &ServerConnectionDraft) -> Result<()> {
+    validate_password_connection(&connection.authentication, &connection.password)?;
+    let _session = authenticated_ssh_session(
+        &connection.host,
+        connection.port,
+        &connection.username,
+        &connection.password,
+        Some(SSH_CONNECT_TIMEOUT),
+    )?;
+
+    Ok(())
+}
+
+pub(crate) fn spawn_ssh_connection_test<T: Send + 'static>(
+    connection: ServerConnectionDraft,
+    context: T,
+) -> Receiver<SshConnectionTestResult<T>> {
+    let (tx, rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = test_ssh_connection(&connection).map_err(|error| error.to_string());
+        let _ = tx.send(SshConnectionTestResult { context, result });
+    });
+
+    rx
 }
 
 fn run_local_terminal(
@@ -135,21 +164,8 @@ fn run_ssh_terminal(
     validate_password_terminal(&server)?;
 
     let port = u16::try_from(server.port).context("SSH 端口不是有效端口")?;
-    let tcp = TcpStream::connect((server.host.as_str(), port))
-        .with_context(|| format!("连接 SSH 服务器失败: {}:{}", server.host, server.port))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
-
-    let mut session = Session::new().context("创建 SSH session 失败")?;
-    session.set_tcp_stream(tcp);
-    session.handshake().context("SSH 握手失败")?;
-    session
-        .userauth_password(&server.username, &server.password)
-        .with_context(|| format!("SSH 密码认证失败: {}", server.username))?;
-
-    if !session.authenticated() {
-        return Err(anyhow!("SSH 认证未通过"));
-    }
+    let session =
+        authenticated_ssh_session(&server.host, port, &server.username, &server.password, None)?;
 
     let mut channel = session.channel_session().context("创建 SSH channel 失败")?;
     channel
@@ -270,6 +286,62 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
+fn authenticated_ssh_session(
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    connect_timeout: Option<Duration>,
+) -> Result<Session> {
+    let tcp = connect_ssh_tcp(host, port, connect_timeout)?;
+    tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
+
+    let mut session = Session::new().context("创建 SSH session 失败")?;
+    session.set_tcp_stream(tcp);
+    session.handshake().context("SSH 握手失败")?;
+    session
+        .userauth_password(username, password)
+        .with_context(|| format!("SSH 密码认证失败: {username}"))?;
+
+    if !session.authenticated() {
+        return Err(anyhow!("SSH 认证未通过"));
+    }
+
+    Ok(session)
+}
+
+fn connect_ssh_tcp(host: &str, port: u16, connect_timeout: Option<Duration>) -> Result<TcpStream> {
+    let Some(connect_timeout) = connect_timeout else {
+        return TcpStream::connect((host, port))
+            .with_context(|| format!("连接 SSH 服务器失败: {host}:{port}"));
+    };
+
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("解析 SSH 地址失败: {host}:{port}"))?
+        .collect::<Vec<_>>();
+
+    if addresses.is_empty() {
+        return Err(anyhow!("没有可用的 SSH 地址: {host}:{port}"));
+    }
+
+    let mut last_error = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, connect_timeout) {
+            Ok(tcp) => return Ok(tcp),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(anyhow!(
+        "连接 SSH 服务器失败: {host}:{port}: {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "未知错误".to_string())
+    ))
+}
+
 fn write_pending_input(channel: &mut ssh2::Channel, pending_input: &mut Vec<u8>) -> Result<()> {
     match channel.write(pending_input) {
         Ok(0) => {}
@@ -288,12 +360,15 @@ fn write_pending_input(channel: &mut ssh2::Channel, pending_input: &mut Vec<u8>)
 }
 
 fn validate_password_terminal(server: &ServerResource) -> Result<()> {
-    if AuthenticationMode::from_label(&server.authentication) != AuthenticationMode::ManualPassword
-    {
+    validate_password_connection(&server.authentication, &server.password)
+}
+
+fn validate_password_connection(authentication: &str, password: &str) -> Result<()> {
+    if AuthenticationMode::from_label(authentication) != AuthenticationMode::ManualPassword {
         return Err(anyhow!("Direct key 还没有配置 key 字段，暂时不能连接"));
     }
 
-    if server.password.is_empty() {
+    if password.is_empty() {
         return Err(anyhow!("Host 没有保存密码，无法连接"));
     }
 
@@ -333,6 +408,20 @@ mod tests {
         };
 
         let error = validate_password_terminal(&server).unwrap_err();
+        assert!(error.to_string().contains("密码"));
+    }
+
+    #[test]
+    fn connection_test_rejects_empty_password_before_network() {
+        let connection = ServerConnectionDraft {
+            host: "bastion.example.com".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            authentication: "Manual Password".to_string(),
+            password: String::new(),
+        };
+
+        let error = test_ssh_connection(&connection).unwrap_err();
         assert!(error.to_string().contains("密码"));
     }
 }

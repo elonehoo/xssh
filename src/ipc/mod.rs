@@ -11,5 +11,10 @@ pub(crate) use migrations::applied_migration_count;
 #[cfg(test)]
 pub(crate) use migrations::migrate_database;
 pub(crate) use servers::{delete_server, insert_server, load_servers, update_server};
-pub(crate) use terminal::{TerminalCommand, TerminalEvent, open_local_terminal, open_ssh_terminal};
-pub(crate) use types::{ServerDraft, ServerResource};
+pub(crate) use terminal::{
+    TerminalCommand, TerminalEvent, open_local_terminal, open_ssh_terminal,
+    spawn_ssh_connection_test,
+};
+pub(crate) use types::{
+    ServerConnectionDraft, ServerDraft, ServerResource, SshConnectionTestResult,
+};

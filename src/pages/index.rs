@@ -8,19 +8,24 @@ mod tabs;
 mod terminal;
 mod windows;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc::Receiver};
 
 use diesel::sqlite::SqliteConnection;
 use gpui::{Context, Entity, FocusHandle, Subscription, Window, WindowHandle, prelude::*};
 use gpui_component::{Root, input::InputState};
 
 use crate::{
-    ipc::{ServerResource, load_servers, open_database},
+    ipc::{ServerResource, SshConnectionTestResult, load_servers, open_database},
     ui::{Language, TextKey, ThemeMode},
 };
 
 use tabs::{ActiveTab, OpenTab, TerminalId};
 use terminal::TerminalSession;
+
+pub(in crate::pages::index) struct HostConnectionTestTarget {
+    pub(in crate::pages::index) server_id: i32,
+    pub(in crate::pages::index) server_name: String,
+}
 
 pub(crate) struct Xssh {
     connection: SqliteConnection,
@@ -28,6 +33,8 @@ pub(crate) struct Xssh {
     open_tabs: Vec<OpenTab>,
     terminal_sessions: HashMap<TerminalId, TerminalSession>,
     active_tab: ActiveTab,
+    host_connection_test_receivers:
+        HashMap<i32, Receiver<SshConnectionTestResult<HostConnectionTestTarget>>>,
     language: Language,
     theme: ThemeMode,
     search_input: Entity<InputState>,
@@ -54,6 +61,7 @@ impl Xssh {
             open_tabs: Vec::new(),
             terminal_sessions: HashMap::new(),
             active_tab: ActiveTab::Vault,
+            host_connection_test_receivers: HashMap::new(),
             language,
             theme,
             search_input,

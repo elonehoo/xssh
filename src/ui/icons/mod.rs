@@ -3,8 +3,10 @@ use gpui::{IntoElement, prelude::*, px, rgb, svg};
 pub(crate) mod add;
 pub(crate) mod close;
 pub(crate) mod connect;
+pub(crate) mod connection_test;
 pub(crate) mod delete;
 pub(crate) mod edit;
+pub(crate) mod notification_status;
 pub(crate) mod password_eye;
 pub(crate) mod password_eye_off;
 pub(crate) mod server;
@@ -27,8 +29,13 @@ pub(crate) const ASSETS: &[IconAsset] = &[
     server::ASSET,
     close::ASSET,
     connect::ASSET,
+    connection_test::ASSET,
     edit::ASSET,
     delete::ASSET,
+    notification_status::INFO_ASSET,
+    notification_status::CIRCLE_CHECK_ASSET,
+    notification_status::CIRCLE_X_ASSET,
+    notification_status::TRIANGLE_ALERT_ASSET,
     add::ASSET,
     settings::ASSET,
     password_eye::ASSET,

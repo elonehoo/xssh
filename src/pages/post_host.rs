@@ -1,20 +1,41 @@
+use std::{
+    sync::mpsc::{Receiver, TryRecvError},
+    time::Duration,
+};
+
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use gpui::{
     App, ClickEvent, Context, Entity, FocusHandle, Focusable, IntoElement, MouseButton, Render,
-    SharedString, Subscription, Window, div, prelude::*, px, rgb,
+    SharedString, Subscription, Timer, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::{
+    Root, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputState},
+    notification::NotificationType,
     select::{Select, SelectEvent, SelectState},
 };
 
 use crate::{
-    ipc::{AuthenticationMode, ServerDraft, ServerResource},
-    ui::{BASE_FONT_SIZE, Language, TextKey, ThemeMode, icons},
+    ipc::{
+        AuthenticationMode, ServerConnectionDraft, ServerDraft, ServerResource,
+        SshConnectionTestResult, spawn_ssh_connection_test,
+    },
+    ui::{BASE_FONT_SIZE, Language, TextKey, ThemeMode, icons, status_notification},
 };
 
 use super::Xssh;
+
+struct HostFormValues {
+    name: String,
+    host: String,
+    port_text: String,
+    username: String,
+    password: String,
+    authentication: AuthenticationMode,
+}
+
+struct FormConnectionTestNotification;
 
 pub(super) struct CreateHostWindow {
     parent: Entity<Xssh>,
@@ -29,7 +50,7 @@ pub(super) struct CreateHostWindow {
     password_revealed: bool,
     auth_select: Entity<SelectState<Vec<&'static str>>>,
     selected_authentication: AuthenticationMode,
-    status: SharedString,
+    connection_test_rx: Option<Receiver<SshConnectionTestResult<()>>>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -144,19 +165,13 @@ impl CreateHostWindow {
             password_revealed: false,
             auth_select,
             selected_authentication,
-            status: language
-                .tr(if server_id.is_some() {
-                    TextKey::EditDialogReady
-                } else {
-                    TextKey::DialogReady
-                })
-                .into(),
+            connection_test_rx: None,
             focus_handle: cx.focus_handle(),
             _subscriptions,
         }
     }
 
-    fn read_draft(&self, cx: &mut Context<Self>) -> Result<ServerDraft> {
+    fn read_form_values(&self, cx: &mut Context<Self>) -> HostFormValues {
         let name = self
             .name_input
             .read(cx)
@@ -199,38 +214,72 @@ impl CreateHostWindow {
             .map(|value| AuthenticationMode::from_label(value))
             .unwrap_or(self.selected_authentication);
 
-        if name.is_empty() {
+        HostFormValues {
+            name,
+            host,
+            port_text,
+            username,
+            password,
+            authentication: selected_authentication,
+        }
+    }
+
+    fn read_draft(&self, cx: &mut Context<Self>) -> Result<ServerDraft> {
+        let values = self.read_form_values(cx);
+
+        if values.name.is_empty() {
             return Err(anyhow!("{}", self.required_message(TextKey::Name)));
         }
 
-        if host.is_empty() {
+        let port = self.read_connection_port(&values)?;
+
+        Ok(ServerDraft {
+            name: values.name,
+            host: values.host,
+            port,
+            username: values.username,
+            authentication: values.authentication.storage_label().to_string(),
+            password: values.password,
+        })
+    }
+
+    fn read_connection_draft(&self, cx: &mut Context<Self>) -> Result<ServerConnectionDraft> {
+        let values = self.read_form_values(cx);
+        let port = self.read_connection_port(&values)?;
+
+        Ok(ServerConnectionDraft {
+            host: values.host,
+            port,
+            username: values.username,
+            authentication: values.authentication.storage_label().to_string(),
+            password: values.password,
+        })
+    }
+
+    fn read_connection_port(&self, values: &HostFormValues) -> Result<u16> {
+        if values.host.is_empty() {
             return Err(anyhow!("{}", self.required_message(TextKey::Hostname)));
         }
 
-        if username.is_empty() {
+        if values.username.is_empty() {
             return Err(anyhow!("{}", self.required_message(TextKey::Username)));
         }
 
-        if selected_authentication == AuthenticationMode::ManualPassword && password.is_empty() {
+        if values.authentication == AuthenticationMode::ManualPassword && values.password.is_empty()
+        {
             return Err(anyhow!("{}", self.required_message(TextKey::Password)));
         }
 
-        let port = port_text
+        let port = values
+            .port_text
             .parse::<u16>()
-            .with_context(|| self.port_number_message(&port_text))?;
+            .with_context(|| self.port_number_message(&values.port_text))?;
 
         if port == 0 {
             return Err(anyhow!("{}", self.port_positive_message()));
         }
 
-        Ok(ServerDraft {
-            name,
-            host,
-            port,
-            username,
-            authentication: selected_authentication.storage_label().to_string(),
-            password,
-        })
+        Ok(port)
     }
 
     fn required_message(&self, key: TextKey) -> String {
@@ -274,15 +323,40 @@ impl CreateHostWindow {
         match result {
             Ok(()) => window.remove_window(),
             Err(error) => {
-                self.status = match self.language {
-                    Language::Zh => format!("保存失败：{error}"),
-                    Language::En => format!("Save failed: {error}"),
-                    Language::Ja => format!("保存に失敗しました: {error}"),
-                }
-                .into();
-                cx.notify();
+                window.push_notification(
+                    status_notification(
+                        self.save_failed_message(&error),
+                        NotificationType::Error,
+                        cx,
+                    ),
+                    cx,
+                );
             }
         }
+    }
+
+    fn on_test_connection(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = match self.read_connection_draft(cx) {
+            Ok(draft) => draft,
+            Err(error) => {
+                self.push_connection_test_notification(
+                    self.connection_test_failed_message(&error.to_string()),
+                    NotificationType::Error,
+                    window,
+                    cx,
+                );
+                return;
+            }
+        };
+
+        self.push_connection_test_notification(
+            self.connection_test_running_message(&draft),
+            NotificationType::Info,
+            window,
+            cx,
+        );
+        self.connection_test_rx = Some(spawn_ssh_connection_test(draft, ()));
+        self.spawn_connection_test_poller(window, cx);
     }
 
     fn on_cancel(&mut self, _: &ClickEvent, window: &mut Window, _: &mut Context<Self>) {
@@ -338,6 +412,120 @@ impl CreateHostWindow {
         button.on_click(move |event, window, cx| {
             view.update(cx, |this, cx| on_click(this, event, window, cx));
         })
+    }
+
+    fn spawn_connection_test_poller(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, window| {
+            loop {
+                Timer::after(Duration::from_millis(100)).await;
+
+                let keep_polling = this
+                    .update_in(window, |this, window, cx| {
+                        this.poll_connection_test_result(window, cx)
+                    })
+                    .unwrap_or(false);
+
+                if !keep_polling {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn poll_connection_test_result(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match self.connection_test_rx.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(result)) => {
+                self.connection_test_rx = None;
+                match result.result {
+                    Ok(()) => self.push_connection_test_notification(
+                        self.connection_test_succeeded_message(),
+                        NotificationType::Success,
+                        window,
+                        cx,
+                    ),
+                    Err(error) => self.push_connection_test_notification(
+                        self.connection_test_failed_message(&error),
+                        NotificationType::Error,
+                        window,
+                        cx,
+                    ),
+                };
+
+                false
+            }
+            Some(Err(TryRecvError::Empty)) => true,
+            Some(Err(TryRecvError::Disconnected)) => {
+                self.connection_test_rx = None;
+                self.push_connection_test_notification(
+                    self.connection_test_failed_message(match self.language {
+                        Language::Zh => "连接测试没有返回结果",
+                        Language::En => "Connection test returned no result",
+                        Language::Ja => "接続テストの結果が返りませんでした",
+                    }),
+                    NotificationType::Error,
+                    window,
+                    cx,
+                );
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn push_connection_test_notification(
+        &self,
+        message: impl Into<SharedString>,
+        notification_type: NotificationType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.push_notification(
+            status_notification(message, notification_type, cx)
+                .id::<FormConnectionTestNotification>(),
+            cx,
+        );
+    }
+
+    fn save_failed_message(&self, error: &anyhow::Error) -> String {
+        match self.language {
+            Language::Zh => format!("保存失败：{error}"),
+            Language::En => format!("Save failed: {error}"),
+            Language::Ja => format!("保存に失敗しました: {error}"),
+        }
+    }
+
+    fn connection_test_running_message(&self, draft: &ServerConnectionDraft) -> String {
+        match self.language {
+            Language::Zh => format!(
+                "正在测试连接：{}@{}:{}...",
+                draft.username, draft.host, draft.port
+            ),
+            Language::En => format!(
+                "Testing connection: {}@{}:{}...",
+                draft.username, draft.host, draft.port
+            ),
+            Language::Ja => format!(
+                "接続をテスト中: {}@{}:{}...",
+                draft.username, draft.host, draft.port
+            ),
+        }
+    }
+
+    fn connection_test_succeeded_message(&self) -> &'static str {
+        match self.language {
+            Language::Zh => "连接测试成功。",
+            Language::En => "Connection test succeeded.",
+            Language::Ja => "接続テストに成功しました。",
+        }
+    }
+
+    fn connection_test_failed_message(&self, error: &str) -> String {
+        match self.language {
+            Language::Zh => format!("连接测试失败：{error}"),
+            Language::En => format!("Connection test failed: {error}"),
+            Language::Ja => format!("接続テストに失敗しました: {error}"),
+        }
     }
 
     fn password_field(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -444,7 +632,7 @@ impl Focusable for CreateHostWindow {
 }
 
 impl Render for CreateHostWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let language = self.language;
         let palette = self.theme.palette();
         let title = if self.server_id.is_some() {
@@ -537,7 +725,7 @@ impl Render for CreateHostWindow {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .justify_between()
+                    .justify_end()
                     .gap_3()
                     .px_4()
                     .py_3()
@@ -545,17 +733,18 @@ impl Render for CreateHostWindow {
                     .border_color(rgb(palette.separator))
                     .child(
                         div()
-                            .flex_1()
-                            .text_size(px(12.))
-                            .text_color(rgb(palette.muted))
-                            .child(self.status.clone()),
-                    )
-                    .child(
-                        div()
                             .flex()
                             .items_center()
                             .justify_end()
                             .gap_2()
+                            .child(Self::button(
+                                self.theme,
+                                "test-host-connection-button",
+                                language.tr(TextKey::TestConnection),
+                                false,
+                                cx,
+                                Self::on_test_connection,
+                            ))
                             .child(Self::button(
                                 self.theme,
                                 "cancel-create-host-button",
@@ -574,5 +763,6 @@ impl Render for CreateHostWindow {
                             )),
                     ),
             )
+            .children(Root::render_notification_layer(window, cx))
     }
 }
