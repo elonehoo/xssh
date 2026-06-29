@@ -14,10 +14,10 @@ use crate::{
     ui::{BASE_FONT_SIZE, Language, TextKey, ThemeMode, icons},
 };
 
-use super::XsshDemo;
+use super::Xssh;
 
 pub(super) struct CreateHostWindow {
-    parent: Entity<XsshDemo>,
+    parent: Entity<Xssh>,
     server_id: Option<i32>,
     language: Language,
     theme: ThemeMode,
@@ -36,7 +36,7 @@ pub(super) struct CreateHostWindow {
 
 impl CreateHostWindow {
     pub(super) fn new(
-        parent: Entity<XsshDemo>,
+        parent: Entity<Xssh>,
         language: Language,
         theme: ThemeMode,
         window: &mut Window,
@@ -46,7 +46,7 @@ impl CreateHostWindow {
     }
 
     pub(super) fn edit(
-        parent: Entity<XsshDemo>,
+        parent: Entity<Xssh>,
         language: Language,
         theme: ThemeMode,
         server: ServerResource,
@@ -61,7 +61,7 @@ impl CreateHostWindow {
     }
 
     fn build(
-        parent: Entity<XsshDemo>,
+        parent: Entity<Xssh>,
         server: Option<ServerResource>,
         language: Language,
         theme: ThemeMode,
@@ -346,10 +346,7 @@ impl CreateHostWindow {
             .flex_col()
             .gap_1()
             .w_full()
-            .child(XsshDemo::label(
-                self.theme,
-                self.language.tr(TextKey::Password),
-            ))
+            .child(Xssh::label(self.theme, self.language.tr(TextKey::Password)))
             .child(Self::password_input(
                 self.theme,
                 self.password_input.clone(),
@@ -484,7 +481,7 @@ impl Render for CreateHostWindow {
                     .overflow_y_scroll()
                     .px_4()
                     .pb_3()
-                    .child(XsshDemo::field(
+                    .child(Xssh::field(
                         self.theme,
                         language.tr(TextKey::Name),
                         self.name_input.clone(),
@@ -494,13 +491,13 @@ impl Render for CreateHostWindow {
                         div()
                             .flex()
                             .gap_3()
-                            .child(div().flex_1().child(XsshDemo::field(
+                            .child(div().flex_1().child(Xssh::field(
                                 self.theme,
                                 language.tr(TextKey::Hostname),
                                 self.host_input.clone(),
                                 false,
                             )))
-                            .child(div().w(px(120.)).child(XsshDemo::field(
+                            .child(div().w(px(120.)).child(Xssh::field(
                                 self.theme,
                                 language.tr(TextKey::Port),
                                 self.port_input.clone(),
@@ -512,7 +509,7 @@ impl Render for CreateHostWindow {
                             .flex()
                             .flex_col()
                             .gap_1()
-                            .child(XsshDemo::label(
+                            .child(Xssh::label(
                                 self.theme,
                                 language.tr(TextKey::Authentication),
                             ))
@@ -527,7 +524,7 @@ impl Render for CreateHostWindow {
                                     .placeholder(language.tr(TextKey::SelectAuthentication)),
                             ),
                     )
-                    .child(XsshDemo::field(
+                    .child(Xssh::field(
                         self.theme,
                         language.tr(TextKey::Username),
                         self.username_input.clone(),

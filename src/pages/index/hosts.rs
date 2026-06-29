@@ -6,9 +6,9 @@ use crate::{
     ui::{BASE_FONT_SIZE, TextKey, icons},
 };
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages::index) fn host_card(
         &self,
         server: ServerResource,
@@ -34,14 +34,14 @@ impl XsshDemo {
             .relative()
             .flex()
             .items_center()
-            .gap_3()
+            .gap_2()
             .flex_grow()
             .flex_shrink()
             .flex_basis(relative(0.48))
             .min_w(px(300.))
-            .min_h(px(76.))
-            .px_4()
-            .py_3()
+            .min_h(px(48.))
+            .px_3()
+            .py_2()
             .rounded_lg()
             .bg(if active {
                 rgb(palette.card_active)
@@ -67,35 +67,18 @@ impl XsshDemo {
             })
             .child(Self::server_icon(self.theme))
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .overflow_hidden()
-                    .gap_1()
-                    .pr(px(100.))
-                    .child(
-                        div()
-                            .text_size(px(BASE_FONT_SIZE))
-                            .text_color(rgb(palette.text))
-                            .truncate()
-                            .child(server.name),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(rgb(palette.muted))
-                            .truncate()
-                            .child(format!(
-                                "{}@{}:{}",
-                                server.username, server.host, server.port
-                            )),
-                    ),
+                div().flex().flex_1().overflow_hidden().pr(px(100.)).child(
+                    div()
+                        .text_size(px(BASE_FONT_SIZE))
+                        .text_color(rgb(palette.text))
+                        .truncate()
+                        .child(server.name),
+                ),
             )
             .child(
                 div()
                     .absolute()
-                    .top_3()
+                    .top(px(10.))
                     .right_3()
                     .flex()
                     .items_center()

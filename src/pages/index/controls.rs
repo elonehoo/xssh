@@ -9,9 +9,9 @@ use gpui_component::{
 
 use crate::ui::{BASE_FONT_SIZE, ThemeMode, icons};
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages) fn label(theme: ThemeMode, text: &str) -> impl IntoElement {
         let palette = theme.palette();
 

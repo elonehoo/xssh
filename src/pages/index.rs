@@ -15,7 +15,7 @@ use crate::{
     ui::{Language, TextKey, ThemeMode},
 };
 
-pub(crate) struct XsshDemo {
+pub(crate) struct Xssh {
     connection: SqliteConnection,
     servers: Vec<ServerResource>,
     open_tabs: Vec<ServerResource>,
@@ -30,7 +30,7 @@ pub(crate) struct XsshDemo {
     _subscriptions: Vec<Subscription>,
 }
 
-impl XsshDemo {
+impl Xssh {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (_database_path, mut connection) = open_database().expect("SQLite 初始化失败");
         let servers = load_servers(&mut connection).expect("服务器资源读取失败");

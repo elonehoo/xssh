@@ -5,9 +5,9 @@ use crate::{
     ui::{BASE_FONT_SIZE, TextKey},
 };
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages::index) fn server_view(&self, server_id: i32) -> impl IntoElement {
         let language = self.language;
         let palette = self.theme.palette();

@@ -14,9 +14,9 @@ use crate::{
 };
 
 use super::super::{post_host::CreateHostWindow, settings::SettingsWindow};
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages::index) fn on_open_create_host_window(
         &mut self,
         _: &ClickEvent,

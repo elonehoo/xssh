@@ -7,9 +7,9 @@ use crate::{
     ui::{BASE_FONT_SIZE, TextKey, ThemeMode, icons},
 };
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages::index) fn title_tab(
         &self,
         server_id: i32,

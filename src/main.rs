@@ -10,7 +10,7 @@ use gpui_component::Root;
 
 use crate::{
     ipc::{applied_migration_count, open_database},
-    pages::XsshDemo,
+    pages::Xssh,
     ui::AppAssets,
 };
 
@@ -39,7 +39,7 @@ fn main() {
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         window_min_size: Some(size(px(760.), px(500.))),
                         titlebar: Some(gpui::TitlebarOptions {
-                            title: Some("XSSH Demo".into()),
+                            title: Some("XSSH".into()),
                             appears_transparent: true,
                             traffic_light_position: Some(point(px(12.), px(11.))),
                             ..Default::default()
@@ -47,7 +47,7 @@ fn main() {
                         ..Default::default()
                     },
                     |window, cx| {
-                        let view = cx.new(|cx| XsshDemo::new(window, cx));
+                        let view = cx.new(|cx| Xssh::new(window, cx));
                         cx.new(|cx| Root::new(view, window, cx))
                     },
                 )
@@ -55,7 +55,7 @@ fn main() {
 
             window
                 .update(cx, |root, window, cx| {
-                    if let Ok(view) = root.view().clone().downcast::<XsshDemo>() {
+                    if let Ok(view) = root.view().clone().downcast::<Xssh>() {
                         window.focus(&view.read(cx).focus_handle(cx));
                     }
                     cx.activate(true);
@@ -89,7 +89,7 @@ mod tests {
         let server = insert_server(
             &mut connection,
             &ServerDraft {
-                name: "Demo".to_string(),
+                name: "Test Host".to_string(),
                 host: "127.0.0.1".to_string(),
                 port: 22,
                 username: "root".to_string(),
@@ -101,7 +101,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(server.name, "Demo");
+        assert_eq!(server.name, "Test Host");
         assert_eq!(server.host, "127.0.0.1");
         assert_eq!(server.port, 22);
         assert_eq!(server.username, "root");

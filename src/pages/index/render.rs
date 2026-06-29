@@ -5,15 +5,15 @@ use gpui_component::Root;
 
 use crate::{ipc::ActiveTab, ui::BASE_FONT_SIZE};
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl Focusable for XsshDemo {
+impl Focusable for Xssh {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for XsshDemo {
+impl Render for Xssh {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab.clone();
         let palette = self.theme.palette();

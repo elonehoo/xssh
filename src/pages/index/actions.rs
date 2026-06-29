@@ -7,9 +7,9 @@ use crate::{
     ui::{Language, TextKey, ThemeMode},
 };
 
-use super::XsshDemo;
+use super::Xssh;
 
-impl XsshDemo {
+impl Xssh {
     pub(in crate::pages::index) fn activate_singleton_window(
         handle: &mut Option<WindowHandle<Root>>,
         cx: &mut Context<Self>,

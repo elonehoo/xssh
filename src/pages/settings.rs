@@ -6,10 +6,10 @@ use gpui_component::select::{Select, SelectEvent, SelectState};
 
 use crate::ui::{BASE_FONT_SIZE, Language, LanguageChoice, TextKey, ThemeChoice, ThemeMode, icons};
 
-use super::XsshDemo;
+use super::Xssh;
 
 pub(super) struct SettingsWindow {
-    parent: Entity<XsshDemo>,
+    parent: Entity<Xssh>,
     language: Language,
     theme: ThemeMode,
     language_select: Entity<SelectState<Vec<LanguageChoice>>>,
@@ -20,7 +20,7 @@ pub(super) struct SettingsWindow {
 
 impl SettingsWindow {
     pub(super) fn new(
-        parent: Entity<XsshDemo>,
+        parent: Entity<Xssh>,
         language: Language,
         theme: ThemeMode,
         window: &mut Window,
