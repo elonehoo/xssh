@@ -212,6 +212,10 @@ hdiutil create \
   -format UDZO \
   "$DMG_PATH"
 
+if [[ -n "$SIGN_IDENTITY" ]]; then
+  codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
+fi
+
 if [[ "$NOTARIZE" == "1" ]]; then
   xcrun notarytool submit "$DMG_PATH" \
     --apple-id "$APPLE_ID" \
