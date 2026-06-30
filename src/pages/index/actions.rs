@@ -1,7 +1,7 @@
 use std::{sync::mpsc::TryRecvError, time::Duration};
 
 use anyhow::Result;
-use gpui::{ClickEvent, Context, Timer, Window, WindowHandle};
+use gpui::{ClickEvent, Context, Window, WindowHandle};
 use gpui_component::{Root, Theme as ComponentTheme, WindowExt, notification::NotificationType};
 
 use crate::{
@@ -176,7 +176,7 @@ impl Xssh {
     ) {
         self.open_server_tab(server.clone());
         self.ensure_terminal_session(TerminalId::Server(server.id));
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.start_terminal_connection(server, cx);
     }
 
@@ -241,7 +241,7 @@ impl Xssh {
 
         self.active_tab = ActiveTab::LocalTerminal;
         self.ensure_terminal_session(TerminalId::Local);
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.start_local_terminal_connection(cx);
         cx.notify();
     }
@@ -291,7 +291,10 @@ impl Xssh {
     fn spawn_host_connection_test_poller(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, window| {
             loop {
-                Timer::after(Duration::from_millis(100)).await;
+                window
+                    .background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
                 let keep_polling = this
                     .update_in(window, |this, window, cx| {

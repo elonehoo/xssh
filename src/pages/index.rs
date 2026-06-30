@@ -4,6 +4,7 @@ mod connection;
 mod controls;
 mod hosts;
 mod render;
+mod sidebar;
 mod tabs;
 mod terminal;
 mod windows;
@@ -45,6 +46,7 @@ pub(crate) struct Xssh {
     dark_terminal_theme: TerminalThemeId,
     light_terminal_theme: TerminalThemeId,
     search_input: Entity<InputState>,
+    sidebar_collapsed: bool,
     create_host_window: Option<WindowHandle<Root>>,
     edit_host_window: Option<WindowHandle<Root>>,
     settings_window: Option<WindowHandle<Root>>,
@@ -84,6 +86,7 @@ impl Xssh {
             dark_terminal_theme,
             light_terminal_theme,
             search_input,
+            sidebar_collapsed: false,
             create_host_window: None,
             edit_host_window: None,
             settings_window: None,

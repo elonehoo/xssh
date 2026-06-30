@@ -2,7 +2,7 @@ use gpui::{
     App, Context, Entity, IntoElement, SharedString, WindowControlArea, div, prelude::*, px, rgb,
 };
 
-use crate::ui::{BASE_FONT_SIZE, TextKey, ThemeMode, icons};
+use crate::ui::{TextKey, ThemeMode, icons};
 
 use super::{
     Xssh,
@@ -219,6 +219,7 @@ impl Xssh {
             .bg(rgb(palette.titlebar_bg))
             .border_b_1()
             .border_color(rgb(palette.border))
+            .child(self.sidebar_toggle(view.clone()))
             .child(
                 div()
                     .id("vault-tab")
@@ -260,91 +261,5 @@ impl Xssh {
                     .h_full()
                     .window_control_area(WindowControlArea::Drag),
             )
-    }
-
-    pub(in crate::pages::index) fn sidebar_item(
-        theme: ThemeMode,
-        label: &'static str,
-        active: bool,
-    ) -> impl IntoElement {
-        let palette = theme.palette();
-
-        div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .h(px(32.))
-            .px_4()
-            .rounded_md()
-            .bg(if active {
-                rgb(palette.panel_hover)
-            } else {
-                rgb(palette.sidebar_bg)
-            })
-            .text_color(if active {
-                rgb(palette.text)
-            } else {
-                rgb(palette.muted)
-            })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(20.))
-                    .child(icons::server::icon(
-                        18.,
-                        if active { palette.text } else { palette.muted },
-                    )),
-            )
-            .child(div().text_size(px(BASE_FONT_SIZE)).child(label))
-    }
-
-    pub(in crate::pages::index) fn settings_button(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let palette = self.theme.palette();
-
-        div()
-            .id("settings-sidebar-button")
-            .flex()
-            .items_center()
-            .gap_3()
-            .h(px(32.))
-            .px_3()
-            .rounded_md()
-            .text_size(px(BASE_FONT_SIZE))
-            .text_color(rgb(palette.muted))
-            .child(icons::settings::icon(18., palette.muted))
-            .child(self.language.tr(TextKey::Settings))
-            .hover(move |style| {
-                style
-                    .bg(rgb(palette.panel_hover))
-                    .text_color(rgb(palette.text))
-            })
-            .on_click(cx.listener(Self::on_open_settings_window))
-    }
-
-    pub(in crate::pages::index) fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = self.theme.palette();
-
-        div()
-            .flex()
-            .flex_col()
-            .w(px(280.))
-            .h_full()
-            .p_3()
-            .bg(rgb(palette.sidebar_bg))
-            .border_r_1()
-            .border_color(rgb(palette.border))
-            .child(Self::sidebar_item(
-                self.theme,
-                self.language.tr(TextKey::Hosts),
-                true,
-            ))
-            .child(div().flex_1())
-            .child(div().h(px(1.)).w_full().bg(rgb(palette.separator)))
-            .child(div().pt_3().child(self.settings_button(cx)))
     }
 }

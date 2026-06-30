@@ -117,8 +117,8 @@ impl Xssh {
             .font_family("Menlo")
             .text_size(px(13.))
             .text_color(rgb(terminal_palette.foreground))
-            .on_click(move |_, window, _| {
-                window.focus(&focus_handle);
+            .on_click(move |_, window, cx| {
+                window.focus(&focus_handle, cx);
             })
             .on_key_down(cx.listener(move |this, event, window, cx| {
                 this.on_terminal_key_down(terminal_id, event, window, cx);

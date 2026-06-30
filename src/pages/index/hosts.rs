@@ -35,8 +35,8 @@ impl Xssh {
             .flex()
             .items_center()
             .gap_2()
-            .flex_grow()
-            .flex_shrink()
+            .flex_grow(1.)
+            .flex_shrink(1.)
             .flex_basis(relative(0.48))
             .min_w(px(300.))
             .min_h(px(48.))
@@ -80,10 +80,10 @@ impl Xssh {
                     .invisible()
                     .group_hover(group_name, |style| style.visible())
                     .child(Self::host_action_button(
-                        self.theme,
                         SharedString::from(format!("connect-host-{}", server.id)),
                         language.tr(TextKey::ConnectHost),
-                        icons::connect::icon(15., palette.text),
+                        icons::connect::PATH,
+                        palette.text,
                         move |_, window, cx| {
                             cx.stop_propagation();
                             let server = server_for_link.clone();
@@ -93,10 +93,10 @@ impl Xssh {
                         },
                     ))
                     .child(Self::host_action_button(
-                        self.theme,
                         SharedString::from(format!("edit-host-{}", server.id)),
                         language.tr(TextKey::EditHost),
-                        icons::edit::icon(15., palette.text),
+                        icons::edit::PATH,
+                        palette.text,
                         move |_, _, cx| {
                             cx.stop_propagation();
                             let server = server_for_edit.clone();
@@ -106,10 +106,10 @@ impl Xssh {
                         },
                     ))
                     .child(Self::host_action_button(
-                        self.theme,
                         SharedString::from(format!("test-host-{}", server.id)),
                         language.tr(TextKey::TestConnection),
-                        icons::connection_test::icon(15., palette.text),
+                        icons::connection_test::PATH,
+                        palette.text,
                         move |_, window, cx| {
                             cx.stop_propagation();
                             let server = server_for_test.clone();
@@ -119,10 +119,10 @@ impl Xssh {
                         },
                     ))
                     .child(Self::host_action_button(
-                        self.theme,
                         SharedString::from(format!("delete-host-{}", server.id)),
                         language.tr(TextKey::Delete),
-                        icons::delete::icon(15., palette.danger),
+                        icons::delete::PATH,
+                        palette.danger,
                         move |_, window, cx| {
                             cx.stop_propagation();
                             let server = server_for_delete.clone();

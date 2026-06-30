@@ -11,6 +11,7 @@ pub(crate) mod password_eye;
 pub(crate) mod password_eye_off;
 pub(crate) mod server;
 pub(crate) mod settings;
+pub(crate) mod sidebar_toggle;
 pub(crate) mod sort_newest;
 pub(crate) mod vault;
 
@@ -38,6 +39,8 @@ pub(crate) const ASSETS: &[IconAsset] = &[
     notification_status::TRIANGLE_ALERT_ASSET,
     add::ASSET,
     settings::ASSET,
+    sidebar_toggle::EXPANDED_ASSET,
+    sidebar_toggle::COLLAPSED_ASSET,
     password_eye::ASSET,
     password_eye_off::ASSET,
     IconAsset {

@@ -54,7 +54,7 @@ impl Xssh {
         create_window
             .update(cx, |root, window, cx| {
                 if let Ok(view) = root.view().clone().downcast::<CreateHostWindow>() {
-                    window.focus(&view.read(cx).name_focus_handle(cx));
+                    window.focus(&view.read(cx).name_focus_handle(cx), cx);
                 }
             })
             .ok();
@@ -100,7 +100,7 @@ impl Xssh {
         edit_window
             .update(cx, |root, window, cx| {
                 if let Ok(view) = root.view().clone().downcast::<CreateHostWindow>() {
-                    window.focus(&view.read(cx).name_focus_handle(cx));
+                    window.focus(&view.read(cx).name_focus_handle(cx), cx);
                 }
             })
             .ok();
@@ -134,9 +134,9 @@ impl Xssh {
                         .child(title.clone()),
                 )
                 .w(px(420.))
-                .confirm()
                 .button_props(
                     DialogButtonProps::default()
+                        .show_cancel(true)
                         .ok_text(delete_text.clone())
                         .ok_variant(ButtonVariant::Danger)
                         .cancel_text(cancel_text.clone()),
@@ -222,7 +222,7 @@ impl Xssh {
         settings_window
             .update(cx, |root, window, cx| {
                 if let Ok(view) = root.view().clone().downcast::<SettingsWindow>() {
-                    window.focus(&view.read(cx).focus_handle(cx));
+                    window.focus(&view.read(cx).focus_handle(cx), cx);
                 }
             })
             .ok();

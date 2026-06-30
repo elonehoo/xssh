@@ -2,7 +2,7 @@ use std::{rc::Rc, sync::mpsc::Receiver, time::Duration};
 
 use gpui::{
     Context, FontStyle, FontWeight, HighlightStyle, KeyDownEvent, Keystroke, Pixels,
-    ScrollStrategy, Size, StyledText, Timer, UnderlineStyle, Window, px, rgb, size,
+    ScrollStrategy, Size, StyledText, UnderlineStyle, Window, px, rgb, size,
 };
 use gpui_component::VirtualListScrollHandle;
 use vt100::{Color, Parser};
@@ -386,18 +386,16 @@ fn terminal_line_from_screen(
     cols: u16,
     cursor: Option<(u16, u16)>,
 ) -> TerminalLine {
-    let last_col = (0..cols)
-        .filter(|col| {
-            let is_cursor = cursor == Some((row, *col));
-            let Some(cell) = screen.cell(row, *col) else {
-                return is_cursor;
-            };
+    let last_col = (0..cols).rfind(|col| {
+        let is_cursor = cursor == Some((row, *col));
+        let Some(cell) = screen.cell(row, *col) else {
+            return is_cursor;
+        };
 
-            is_cursor
-                || cell.has_contents()
-                || TerminalTextStyle::from_cell(cell).has_visible_background()
-        })
-        .next_back();
+        is_cursor
+            || cell.has_contents()
+            || TerminalTextStyle::from_cell(cell).has_visible_background()
+    });
 
     let Some(last_col) = last_col else {
         return TerminalLine::plain(" ");
@@ -604,7 +602,9 @@ impl Xssh {
     ) {
         cx.spawn(async move |this, cx| {
             loop {
-                Timer::after(Duration::from_millis(16)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(16))
+                    .await;
 
                 let mut pending = Vec::new();
                 while let Ok(event) = events.try_recv() {

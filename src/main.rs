@@ -3,9 +3,7 @@ mod pages;
 mod schema;
 mod ui;
 
-use gpui::{
-    App, AppContext, Application, Bounds, Focusable, WindowBounds, WindowOptions, point, px, size,
-};
+use gpui::{App, AppContext, Bounds, Focusable, WindowBounds, WindowOptions, point, px, size};
 use gpui_component::Root;
 
 use crate::{
@@ -27,7 +25,7 @@ fn main() {
         return;
     }
 
-    Application::new()
+    gpui_platform::application()
         .with_assets(AppAssets)
         .run(|cx: &mut App| {
             gpui_component::init(cx);
@@ -55,7 +53,7 @@ fn main() {
             window
                 .update(cx, |root, window, cx| {
                     if let Ok(view) = root.view().clone().downcast::<Xssh>() {
-                        window.focus(&view.read(cx).focus_handle(cx));
+                        window.focus(&view.read(cx).focus_handle(cx), cx);
                     }
                     cx.activate(true);
                 })
@@ -183,6 +181,8 @@ mod tests {
             icons::notification_status::TRIANGLE_ALERT_PATH,
             icons::add::PATH,
             icons::settings::PATH,
+            icons::sidebar_toggle::EXPANDED_PATH,
+            icons::sidebar_toggle::COLLAPSED_PATH,
             icons::password_eye::PATH,
             icons::password_eye_off::PATH,
             icons::GPUI_EYE_ICON_PATH,

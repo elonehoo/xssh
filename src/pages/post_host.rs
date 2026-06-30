@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 use gpui::{
     App, ClickEvent, Context, Entity, FocusHandle, Focusable, IntoElement, MouseButton, Render,
-    SharedString, Subscription, Timer, Window, div, prelude::*, px, rgb,
+    SharedString, Subscription, Window, div, prelude::*, px, rgb,
 };
 use gpui_component::{
     Root, WindowExt,
@@ -417,7 +417,10 @@ impl CreateHostWindow {
     fn spawn_connection_test_poller(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, window| {
             loop {
-                Timer::after(Duration::from_millis(100)).await;
+                window
+                    .background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
                 let keep_polling = this
                     .update_in(window, |this, window, cx| {

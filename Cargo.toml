@@ -18,8 +18,9 @@ XSSH is a desktop SSH client built with Rust, GPUI, and SQLite-backed host stora
 anyhow = "1.0.98"
 diesel = { version = "2.3.10", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
 diesel_migrations = { version = "2.3.2", features = ["sqlite"] }
-gpui = "0.2.2"
-gpui-component = "0.5.1"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "1505b1487131adbb443f6c69e87847db35bfa2d1" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit"] }
 libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
 portable-pty = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }

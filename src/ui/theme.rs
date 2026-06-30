@@ -46,7 +46,6 @@ impl ThemeMode {
             Self::Dark => AppPalette {
                 app_bg: 0x050505,
                 titlebar_bg: 0x1f1f1f,
-                sidebar_bg: 0x080808,
                 panel_bg: 0x0f0f0f,
                 panel_hover: 0x202020,
                 text: 0xe8e8e8,
@@ -73,7 +72,6 @@ impl ThemeMode {
             Self::Light => AppPalette {
                 app_bg: 0xf5f5f5,
                 titlebar_bg: 0xf0f0f0,
-                sidebar_bg: 0xf7f7f7,
                 panel_bg: 0xffffff,
                 panel_hover: 0xeeeeee,
                 text: 0x202020,
@@ -132,7 +130,6 @@ impl SelectItem for ThemeChoice {
 pub(crate) struct AppPalette {
     pub(crate) app_bg: u32,
     pub(crate) titlebar_bg: u32,
-    pub(crate) sidebar_bg: u32,
     pub(crate) panel_bg: u32,
     pub(crate) panel_hover: u32,
     pub(crate) text: u32,
