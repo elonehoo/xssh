@@ -25,7 +25,7 @@ libsqlite3-sys = { version = "0.35.0", features = ["bundled"] }
 portable-pty = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-ssh2 = "0.9.5"
+ssh2 = { version = "0.9.5", features = ["vendored-openssl"] }
 vt100 = "0.16.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
