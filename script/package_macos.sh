@@ -25,6 +25,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_FRAMEWORKS="$APP_CONTENTS/Frameworks"
 APP_BINARY="$APP_MACOS/$APP_NAME"
+DMG_STAGING_DIR="$DIST_DIR/dmg-staging"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ICON_SOURCE="$ROOT_DIR/assets/app-icon/app-icon.icns"
 ICON_NAME="app-icon.icns"
@@ -78,6 +79,32 @@ sign_bundle_if_exists() {
   if [[ -e "$path" ]]; then
     codesign --force --timestamp --options runtime --sign "$SIGN_IDENTITY" "$path"
   fi
+}
+
+create_dmg_with_retry() {
+  local source_dir="$1"
+  local dmg_path="$2"
+  local attempts=4
+  local delay_seconds=5
+
+  for ((attempt = 1; attempt <= attempts; attempt += 1)); do
+    rm -f "$dmg_path"
+    if hdiutil create \
+      -volname "$APP_NAME" \
+      -srcfolder "$source_dir" \
+      -ov \
+      -format UDZO \
+      "$dmg_path"; then
+      return 0
+    fi
+
+    if ((attempt == attempts)); then
+      return 1
+    fi
+
+    sync
+    sleep "$delay_seconds"
+  done
 }
 
 if [[ "$PROFILE" != "debug" && "$PROFILE" != "release" ]]; then
@@ -204,13 +231,11 @@ fi
 
 DMG_PATH="$DIST_DIR/$APP_NAME-$VERSION-$ARTIFACT_SUFFIX.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
+rm -rf "$DMG_STAGING_DIR"
+mkdir -p "$DMG_STAGING_DIR"
+ditto "$APP_BUNDLE" "$DMG_STAGING_DIR/$APP_NAME.app"
 rm -f "$DMG_PATH" "$CHECKSUM_PATH"
-hdiutil create \
-  -volname "$APP_NAME" \
-  -srcfolder "$APP_BUNDLE" \
-  -ov \
-  -format UDZO \
-  "$DMG_PATH"
+create_dmg_with_retry "$DMG_STAGING_DIR" "$DMG_PATH"
 
 if [[ -n "$SIGN_IDENTITY" ]]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
