@@ -240,6 +240,7 @@ impl Xssh {
         div()
             .flex()
             .flex_none()
+            .relative()
             .items_center()
             .h(px(36.))
             .w_full()
@@ -320,6 +321,8 @@ impl Xssh {
                 window,
             ))
             .children(open_tabs)
-            .child(Self::titlebar_drag_space(None, drag_state, window))
+            .child(Self::titlebar_drag_space(None, drag_state.clone(), window))
+            .child(self.upload_log_menu(view.clone()))
+            .child(Self::titlebar_drag_space(Some(8.), drag_state, window))
     }
 }

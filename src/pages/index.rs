@@ -7,12 +7,15 @@ mod render;
 mod sidebar;
 mod tabs;
 mod terminal;
+mod uploads;
 mod windows;
 
 use std::{collections::HashMap, sync::mpsc::Receiver};
 
 use diesel::sqlite::SqliteConnection;
-use gpui::{Context, Entity, FocusHandle, Subscription, Window, WindowHandle, prelude::*};
+use gpui::{
+    Context, Entity, FocusHandle, KeystrokeEvent, Subscription, Window, WindowHandle, prelude::*,
+};
 use gpui_component::{Root, input::InputState};
 
 use crate::{
@@ -25,6 +28,7 @@ use crate::{
 
 use tabs::{ActiveTab, OpenTab, TerminalId};
 use terminal::TerminalSession;
+use uploads::UploadTask;
 
 pub(in crate::pages::index) struct HostConnectionTestTarget {
     pub(in crate::pages::index) server_id: i32,
@@ -36,6 +40,8 @@ pub(crate) struct Xssh {
     servers: Vec<ServerResource>,
     open_tabs: Vec<OpenTab>,
     terminal_sessions: HashMap<TerminalId, TerminalSession>,
+    upload_tasks: Vec<UploadTask>,
+    upload_log_open: bool,
     active_tab: ActiveTab,
     host_connection_test_receivers:
         HashMap<i32, Receiver<SshConnectionTestResult<HostConnectionTestTarget>>>,
@@ -47,6 +53,8 @@ pub(crate) struct Xssh {
     edit_host_window: Option<WindowHandle<Root>>,
     settings_window: Option<WindowHandle<Root>>,
     focus_handle: FocusHandle,
+    terminal_ime_buffer: String,
+    terminal_ime_marked_range: Option<std::ops::Range<usize>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -60,13 +68,27 @@ impl Xssh {
         sync_component_theme(theme, Some(window), cx);
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(language.tr(TextKey::SearchHosts)));
-        let _subscriptions = Vec::new();
+        let view = cx.weak_entity();
+        let _subscriptions =
+            vec![
+                cx.intercept_keystrokes(move |event: &KeystrokeEvent, window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+
+                    let _ = view.update(cx, |this, cx| {
+                        this.intercept_terminal_tab(event, window, cx);
+                    });
+                }),
+            ];
 
         let mut this = Self {
             connection,
             servers,
             open_tabs: Vec::new(),
             terminal_sessions: HashMap::new(),
+            upload_tasks: Vec::new(),
+            upload_log_open: false,
             active_tab: ActiveTab::Vault,
             host_connection_test_receivers: HashMap::new(),
             language,
@@ -77,6 +99,8 @@ impl Xssh {
             edit_host_window: None,
             settings_window: None,
             focus_handle: cx.focus_handle(),
+            terminal_ime_buffer: String::new(),
+            terminal_ime_marked_range: None,
             _subscriptions,
         };
 

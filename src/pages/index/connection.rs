@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, Bounds, Context, IntoElement, Pixels, SharedString, canvas, div, prelude::*, px,
-    rgb,
+    AnyElement, Bounds, Context, ElementInputHandler, ExternalPaths, IntoElement, MouseButton,
+    Pixels, SharedString, canvas, div, prelude::*, px, rgb,
 };
 use gpui_component::v_virtual_list;
 
@@ -81,7 +81,7 @@ impl Xssh {
         let language = self.language;
         let terminal_palette = self.active_terminal_palette();
         let focus_handle = self.focus_handle.clone();
-        let resize_probe = terminal_resize_probe(cx.entity(), terminal_id);
+        let input_probe = terminal_input_probe(cx.entity(), terminal_id);
         let terminal_list = self.terminal_sessions.get(&terminal_id).map(|session| {
             let line_sizes = session.display_line_sizes();
             let scroll_handle = session.scroll_handle.clone();
@@ -93,6 +93,7 @@ impl Xssh {
                 list_id,
                 line_sizes,
                 move |this, visible_range, _, _| {
+                    this.update_terminal_visible_range(terminal_id, visible_range.clone());
                     this.terminal_line_elements(terminal_id, visible_range)
                 },
             )
@@ -108,6 +109,7 @@ impl Xssh {
             )))
             .track_focus(&self.focus_handle)
             .focusable()
+            .tab_stop(false)
             .relative()
             .flex()
             .flex_col()
@@ -123,7 +125,38 @@ impl Xssh {
             .on_key_down(cx.listener(move |this, event, window, cx| {
                 this.on_terminal_key_down(terminal_id, event, window, cx);
             }))
-            .child(resize_probe)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event, window, cx| {
+                    this.on_terminal_selection_mouse_down(terminal_id, event, window, cx);
+                }),
+            )
+            .on_mouse_move(cx.listener(move |this, event, window, cx| {
+                this.on_terminal_selection_mouse_move(terminal_id, event, window, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, event, window, cx| {
+                    this.on_terminal_selection_mouse_up(terminal_id, event, window, cx);
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.stop_terminal_selection(terminal_id, cx);
+                }),
+            )
+            .when(matches!(terminal_id, TerminalId::Server(_)), |this| {
+                this.border_2()
+                    .border_color(rgb(terminal_palette.background))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| {
+                        style.border_color(rgb(terminal_palette.foreground).opacity(0.45))
+                    })
+                    .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                        this.on_terminal_file_drop(terminal_id, paths, window, cx);
+                    }))
+            })
+            .child(input_probe)
             .when_some(terminal_list, |this, list| this.child(list))
             .when(!self.terminal_sessions.contains_key(&terminal_id), |this| {
                 this.child(
@@ -147,15 +180,21 @@ impl Xssh {
             .get(&terminal_id)
             .map(|session| {
                 let terminal_palette = self.active_terminal_palette();
+                let selection_background = self.theme.palette().primary_bg;
                 visible_range
-                    .filter_map(|row| session.display_line(row))
-                    .map(|line| {
+                    .filter_map(|row| session.display_line(row).map(|line| (row, line)))
+                    .map(|(row, line)| {
+                        let selection = session.selection_range_for_line(row, &line);
                         div()
                             .h(px(TERMINAL_LINE_HEIGHT))
                             .w_full()
                             .line_height(px(TERMINAL_LINE_HEIGHT))
                             .whitespace_nowrap()
-                            .child(line.styled_text(terminal_palette))
+                            .child(line.styled_text(
+                                terminal_palette,
+                                selection,
+                                selection_background,
+                            ))
                             .into_any_element()
                     })
                     .collect()
@@ -164,7 +203,8 @@ impl Xssh {
     }
 }
 
-fn terminal_resize_probe(view: gpui::Entity<Xssh>, terminal_id: TerminalId) -> impl IntoElement {
+fn terminal_input_probe(view: gpui::Entity<Xssh>, terminal_id: TerminalId) -> impl IntoElement {
+    let input_view = view.clone();
     canvas(
         move |bounds, _, cx| {
             let size = terminal_dimensions_from_bounds(bounds);
@@ -174,7 +214,17 @@ fn terminal_resize_probe(view: gpui::Entity<Xssh>, terminal_id: TerminalId) -> i
                 }
             });
         },
-        |_, _, _, _| {},
+        move |bounds, _, window, cx| {
+            let focus_handle = input_view.read(cx).focus_handle.clone();
+            input_view.update(cx, |this, _| {
+                this.update_terminal_bounds(terminal_id, bounds);
+            });
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, input_view.clone()),
+                cx,
+            );
+        },
     )
     .absolute()
     .size_full()
