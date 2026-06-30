@@ -1,7 +1,10 @@
+#![allow(unexpected_cfgs)]
+
 mod ipc;
 mod pages;
 mod schema;
 mod ui;
+mod updater;
 
 use gpui::{App, AppContext, Bounds, Focusable, WindowBounds, WindowOptions, point, px, size};
 use gpui_component::Root;
@@ -29,6 +32,7 @@ fn main() {
         .with_assets(AppAssets)
         .run(|cx: &mut App| {
             gpui_component::init(cx);
+            updater::start();
 
             let bounds = Bounds::centered(None, size(px(980.), px(640.)), cx);
             let window = cx

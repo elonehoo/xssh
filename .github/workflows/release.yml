@@ -1,0 +1,218 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, matching Cargo.toml"
+        required: true
+        default: "0.0.1"
+      prerelease:
+        description: "Mark the GitHub release as prerelease"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: Build, sign, notarize, and publish macOS app
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            PRERELEASE="false"
+          else
+            VERSION="${{ inputs.version }}"
+            PRERELEASE="${{ inputs.prerelease }}"
+          fi
+
+          CARGO_VERSION="$(awk -F '"' '/^version =/ { print $2; exit }' Cargo.toml)"
+          if [[ "$VERSION" != "$CARGO_VERSION" ]]; then
+            echo "Release version $VERSION does not match Cargo.toml version $CARGO_VERSION" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >>"$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >>"$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >>"$GITHUB_OUTPUT"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Import Developer ID certificate
+        id: certificate
+        shell: bash
+        env:
+          DEV_ID_APP_P12_BASE64: ${{ secrets.DEV_ID_APP_P12_BASE64 }}
+          DEV_ID_APP_P12_PASSWORD: ${{ secrets.DEV_ID_APP_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD_AFK: ${{ secrets.KEYCHAIN_PASSWORD_AFK }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEV_ID_APP_P12_BASE64" || -z "$DEV_ID_APP_P12_PASSWORD" ]]; then
+            echo "Missing Apple Developer ID certificate secrets" >&2
+            exit 1
+          fi
+
+          KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD_AFK:-temporary-password-$GITHUB_RUN_ID}"
+          CERTIFICATE_PATH="$RUNNER_TEMP/developer-id-application.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+
+          printf "%s" "$DEV_ID_APP_P12_BASE64" | base64 -D >"$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$DEV_ID_APP_P12_PASSWORD" \
+            -T /usr/bin/codesign
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          security find-identity -p codesigning -v "$KEYCHAIN_PATH"
+
+          SIGN_IDENTITY="$(security find-identity -p codesigning -v "$KEYCHAIN_PATH" | awk -F '"' '/Developer ID Application/ { print $2; exit }')"
+          if [[ -z "$SIGN_IDENTITY" ]]; then
+            echo "No Developer ID Application identity found in imported certificate" >&2
+            exit 1
+          fi
+          echo "identity=$SIGN_IDENTITY" >>"$GITHUB_OUTPUT"
+
+      - name: Package signed and notarized macOS app
+        id: package
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SIGN_IDENTITY: ${{ steps.certificate.outputs.identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZE: "1"
+          ARTIFACT_SUFFIX: "macos"
+        run: |
+          set -euo pipefail
+          if [[ -z "$SIGN_IDENTITY" ]]; then
+            echo "Missing APPLE_DEVELOPER_ID_APPLICATION_IDENTITY secret" >&2
+            exit 1
+          fi
+          script/package_macos.sh
+
+      - name: Generate Sparkle appcast
+        id: appcast
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          DMG_PATH: ${{ steps.package.outputs.dmg_path }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "Missing SPARKLE_PRIVATE_KEY secret" >&2
+            exit 1
+          fi
+
+          SPARKLE_DIR="$RUNNER_TEMP/sparkle"
+          RELEASE_DIR="$RUNNER_TEMP/sparkle-release"
+          mkdir -p "$SPARKLE_DIR" "$RELEASE_DIR"
+          curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/2.9.3/Sparkle-2.9.3.tar.xz" \
+            -o "$SPARKLE_DIR/Sparkle.tar.xz"
+          tar -xf "$SPARKLE_DIR/Sparkle.tar.xz" -C "$SPARKLE_DIR" bin/generate_appcast
+
+          cp "$DMG_PATH" "$RELEASE_DIR/"
+          printf "# XSSH %s\n\nSigned and notarized macOS release.\n" "$VERSION" \
+            >"$RELEASE_DIR/XSSH-$VERSION-macos.md"
+          printf "%s" "$SPARKLE_PRIVATE_KEY" |
+            "$SPARKLE_DIR/bin/generate_appcast" \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/${{ github.repository }}/releases/download/$TAG" \
+              --link "https://github.com/${{ github.repository }}" \
+              -o "$RELEASE_DIR/appcast.xml" \
+              "$RELEASE_DIR"
+
+          echo "appcast_path=$RELEASE_DIR/appcast.xml" >>"$GITHUB_OUTPUT"
+
+      - name: Validate signed app
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign -dvvv --entitlements :- "${{ steps.package.outputs.app_bundle }}"
+          spctl -a -vv "${{ steps.package.outputs.app_bundle }}"
+          spctl -a -vv -t open --context context:primary-signature "${{ steps.package.outputs.dmg_path }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XSSH-${{ steps.release.outputs.version }}-macos
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.checksum_path }}
+            ${{ steps.appcast.outputs.appcast_path }}
+          if-no-files-found: error
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          DMG_PATH: ${{ steps.package.outputs.dmg_path }}
+          CHECKSUM_PATH: ${{ steps.package.outputs.checksum_path }}
+          APPCAST_PATH: ${{ steps.appcast.outputs.appcast_path }}
+        run: |
+          set -euo pipefail
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
+
+          RELEASE_FLAGS=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            RELEASE_FLAGS+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG_PATH" "$CHECKSUM_PATH" "$APPCAST_PATH" --clobber
+          else
+            gh release create "$TAG" \
+              "$DMG_PATH" \
+              "$CHECKSUM_PATH" \
+              "$APPCAST_PATH" \
+              --target "$GITHUB_SHA" \
+              --title "XSSH $VERSION" \
+              --notes "macOS signed and notarized release." \
+              "${RELEASE_FLAGS[@]}"
+          fi

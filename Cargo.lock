@@ -8340,6 +8340,7 @@ dependencies = [
  "gpui-component",
  "gpui_platform",
  "libsqlite3-sys",
+ "objc",
  "portable-pty",
  "serde",
  "serde_json",
