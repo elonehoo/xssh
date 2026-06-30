@@ -42,11 +42,9 @@ impl Render for Xssh {
                             .child(self.sidebar(cx))
                             .child(self.vault_view(cx))
                             .into_any_element(),
-                        ActiveTab::LocalTerminal => {
-                            self.local_terminal_view(window, cx).into_any_element()
-                        }
+                        ActiveTab::LocalTerminal => self.local_terminal_view(cx).into_any_element(),
                         ActiveTab::Server(server_id) => {
-                            self.server_view(server_id, window, cx).into_any_element()
+                            self.server_view(server_id, cx).into_any_element()
                         }
                     }),
             )

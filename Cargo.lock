@@ -7587,6 +7587,8 @@ dependencies = [
  "gpui-component",
  "libsqlite3-sys",
  "portable-pty",
+ "serde",
+ "serde_json",
  "ssh2",
  "vt100",
 ]

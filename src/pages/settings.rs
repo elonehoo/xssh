@@ -1,10 +1,17 @@
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, IntoElement, Render, Subscription, Window, div,
-    prelude::*, px, rgb,
+    App, Context, Entity, FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription,
+    Window, div, prelude::*, px, rgb,
 };
-use gpui_component::select::{Select, SelectEvent, SelectState};
+use gpui_component::{
+    select::{Select, SelectDelegate, SelectEvent, SelectState},
+    setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+};
 
-use crate::ui::{BASE_FONT_SIZE, Language, LanguageChoice, TextKey, ThemeChoice, ThemeMode, icons};
+use crate::ui::{
+    BASE_FONT_SIZE, Language, LanguageChoice, TerminalThemeChoice, TerminalThemeId,
+    TerminalThemeKind, TextKey, ThemeChoice, ThemeMode, terminal_theme_options,
+    terminal_theme_selected_index,
+};
 
 use super::Xssh;
 
@@ -12,8 +19,12 @@ pub(super) struct SettingsWindow {
     parent: Entity<Xssh>,
     language: Language,
     theme: ThemeMode,
+    dark_terminal_theme: TerminalThemeId,
+    light_terminal_theme: TerminalThemeId,
     language_select: Entity<SelectState<Vec<LanguageChoice>>>,
     theme_select: Entity<SelectState<Vec<ThemeChoice>>>,
+    dark_terminal_theme_select: Entity<SelectState<Vec<TerminalThemeChoice>>>,
+    light_terminal_theme_select: Entity<SelectState<Vec<TerminalThemeChoice>>>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -23,6 +34,8 @@ impl SettingsWindow {
         parent: Entity<Xssh>,
         language: Language,
         theme: ThemeMode,
+        dark_terminal_theme: TerminalThemeId,
+        light_terminal_theme: TerminalThemeId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -46,17 +59,55 @@ impl SettingsWindow {
                 cx,
             )
         });
+        let dark_terminal_theme_select = cx.new(|cx| {
+            SelectState::new(
+                terminal_theme_options(TerminalThemeKind::Dark),
+                Some(terminal_theme_selected_index(
+                    dark_terminal_theme,
+                    TerminalThemeKind::Dark,
+                )),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        let light_terminal_theme_select = cx.new(|cx| {
+            SelectState::new(
+                terminal_theme_options(TerminalThemeKind::Light),
+                Some(terminal_theme_selected_index(
+                    light_terminal_theme,
+                    TerminalThemeKind::Light,
+                )),
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
         let _subscriptions = vec![
             cx.subscribe_in(&language_select, window, Self::on_language_select_event),
             cx.subscribe_in(&theme_select, window, Self::on_theme_select_event),
+            cx.subscribe_in(
+                &dark_terminal_theme_select,
+                window,
+                Self::on_dark_terminal_theme_select_event,
+            ),
+            cx.subscribe_in(
+                &light_terminal_theme_select,
+                window,
+                Self::on_light_terminal_theme_select_event,
+            ),
         ];
 
         Self {
             parent,
             language,
             theme,
+            dark_terminal_theme,
+            light_terminal_theme,
             language_select,
             theme_select,
+            dark_terminal_theme_select,
+            light_terminal_theme_select,
             focus_handle: cx.focus_handle(),
             _subscriptions,
         }
@@ -88,7 +139,7 @@ impl SettingsWindow {
         &mut self,
         _: &Entity<SelectState<Vec<ThemeChoice>>>,
         event: &SelectEvent<Vec<ThemeChoice>>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let SelectEvent::Confirm(Some(theme)) = event else {
@@ -97,30 +148,64 @@ impl SettingsWindow {
 
         self.theme = *theme;
         self.parent.update(cx, |parent, cx| {
-            parent.set_theme(self.theme, cx);
+            parent.set_theme(self.theme, window, cx);
         });
         cx.notify();
     }
 
-    fn setting_row(
-        theme: ThemeMode,
-        label: &'static str,
-        control: impl IntoElement,
-    ) -> impl IntoElement {
-        let palette = theme.palette();
+    fn on_dark_terminal_theme_select_event(
+        &mut self,
+        _: &Entity<SelectState<Vec<TerminalThemeChoice>>>,
+        event: &SelectEvent<Vec<TerminalThemeChoice>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(terminal_theme)) = event else {
+            return;
+        };
 
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .child(
-                div()
-                    .text_size(px(BASE_FONT_SIZE))
-                    .text_color(rgb(palette.text))
-                    .child(label),
-            )
-            .child(div().w(px(190.)).child(control))
+        self.dark_terminal_theme = *terminal_theme;
+        self.parent.update(cx, |parent, cx| {
+            parent.set_dark_terminal_theme(self.dark_terminal_theme, cx);
+        });
+        cx.notify();
+    }
+
+    fn on_light_terminal_theme_select_event(
+        &mut self,
+        _: &Entity<SelectState<Vec<TerminalThemeChoice>>>,
+        event: &SelectEvent<Vec<TerminalThemeChoice>>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(terminal_theme)) = event else {
+            return;
+        };
+
+        self.light_terminal_theme = *terminal_theme;
+        self.parent.update(cx, |parent, cx| {
+            parent.set_light_terminal_theme(self.light_terminal_theme, cx);
+        });
+        cx.notify();
+    }
+
+    fn select_field<D>(
+        select: Entity<SelectState<D>>,
+        theme: ThemeMode,
+    ) -> SettingField<SharedString>
+    where
+        D: SelectDelegate + 'static,
+    {
+        SettingField::render(move |_, _, _| {
+            let palette = theme.palette();
+
+            Select::new(&select)
+                .w(px(280.))
+                .rounded_sm()
+                .bg(rgb(palette.input_bg))
+                .border_color(rgb(palette.input_border))
+                .text_color(rgb(palette.text))
+        })
     }
 }
 
@@ -137,51 +222,50 @@ impl Render for SettingsWindow {
 
         div()
             .track_focus(&self.focus_handle(cx))
-            .flex()
-            .flex_col()
             .size_full()
             .bg(rgb(palette.panel_bg))
             .text_size(px(BASE_FONT_SIZE))
             .text_color(rgb(palette.text))
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .pt_4()
-                    .pb_3()
-                    .border_b_1()
-                    .border_color(rgb(palette.separator))
-                    .child(icons::settings::icon(18., palette.text))
-                    .child(language.tr(TextKey::Settings)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_4()
-                    .p_4()
-                    .child(Self::setting_row(
-                        self.theme,
-                        language.tr(TextKey::Theme),
-                        Select::new(&self.theme_select)
-                            .w_full()
-                            .rounded_sm()
-                            .bg(rgb(palette.input_bg))
-                            .border_color(rgb(palette.input_border))
-                            .text_color(rgb(palette.text)),
-                    ))
-                    .child(Self::setting_row(
-                        self.theme,
-                        language.tr(TextKey::Language),
-                        Select::new(&self.language_select)
-                            .w_full()
-                            .rounded_sm()
-                            .bg(rgb(palette.input_bg))
-                            .border_color(rgb(palette.input_border))
-                            .text_color(rgb(palette.text)),
-                    )),
+                Settings::new("xssh-settings").sidebar_width(px(210.)).page(
+                    SettingPage::new(language.tr(TextKey::Settings))
+                        .default_open(true)
+                        .resettable(false)
+                        .group(
+                            SettingGroup::new()
+                                .title(language.tr(TextKey::Appearance))
+                                .item(SettingItem::new(
+                                    language.tr(TextKey::Theme),
+                                    Self::select_field(self.theme_select.clone(), self.theme),
+                                )),
+                        )
+                        .group(
+                            SettingGroup::new()
+                                .title(language.tr(TextKey::TerminalTheme))
+                                .item(SettingItem::new(
+                                    language.tr(TextKey::DarkTerminalTheme),
+                                    Self::select_field(
+                                        self.dark_terminal_theme_select.clone(),
+                                        self.theme,
+                                    ),
+                                ))
+                                .item(SettingItem::new(
+                                    language.tr(TextKey::LightTerminalTheme),
+                                    Self::select_field(
+                                        self.light_terminal_theme_select.clone(),
+                                        self.theme,
+                                    ),
+                                )),
+                        )
+                        .group(
+                            SettingGroup::new()
+                                .title(language.tr(TextKey::Language))
+                                .item(SettingItem::new(
+                                    language.tr(TextKey::Language),
+                                    Self::select_field(self.language_select.clone(), self.theme),
+                                )),
+                        ),
+                ),
             )
     }
 }

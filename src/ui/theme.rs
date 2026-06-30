@@ -12,6 +12,20 @@ pub(crate) enum ThemeMode {
 }
 
 impl ThemeMode {
+    pub(crate) fn from_setting_value(value: &str) -> Self {
+        match value {
+            "light" => Self::Light,
+            _ => Self::Dark,
+        }
+    }
+
+    pub(crate) fn setting_value(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+
     pub(crate) fn selected_index(self) -> IndexPath {
         let row = match self {
             Self::Dark => 0,

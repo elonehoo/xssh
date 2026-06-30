@@ -1,6 +1,8 @@
 use diesel::prelude::*;
 
-use crate::schema::servers;
+use serde::{Deserialize, Serialize};
+
+use crate::schema::{app_settings, servers};
 
 use anyhow::{Context as AnyhowContext, Result, anyhow};
 
@@ -59,6 +61,33 @@ impl TryFrom<&ServerResource> for ServerConnectionDraft {
 pub(crate) struct SshConnectionTestResult<T> {
     pub(crate) context: T,
     pub(crate) result: std::result::Result<(), String>,
+}
+
+#[derive(Clone, Debug, Queryable, Selectable)]
+#[diesel(table_name = app_settings)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub(super) struct AppSettingsRow {
+    pub(super) settings_data: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AppSettingsData {
+    pub(crate) language: String,
+    pub(crate) theme: String,
+    pub(crate) dark_terminal_theme: String,
+    pub(crate) light_terminal_theme: String,
+}
+
+impl Default for AppSettingsData {
+    fn default() -> Self {
+        Self {
+            language: "zh".to_string(),
+            theme: "dark".to_string(),
+            dark_terminal_theme: "default-dark".to_string(),
+            light_terminal_theme: "default-light".to_string(),
+        }
+    }
 }
 
 #[derive(Insertable)]

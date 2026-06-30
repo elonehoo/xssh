@@ -187,12 +187,14 @@ impl Xssh {
         let parent = cx.entity();
         let language = self.language;
         let theme = self.theme;
-        let bounds = Bounds::centered(None, size(px(420.), px(260.)), cx);
+        let dark_terminal_theme = self.dark_terminal_theme;
+        let light_terminal_theme = self.light_terminal_theme;
+        let bounds = Bounds::centered(None, size(px(780.), px(520.)), cx);
         let settings_window = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(380.), px(240.))),
+                    window_min_size: Some(size(px(680.), px(460.))),
                     kind: WindowKind::Normal,
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some(language.tr(TextKey::Settings).into()),
@@ -201,8 +203,17 @@ impl Xssh {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view =
-                        cx.new(|cx| SettingsWindow::new(parent, language, theme, window, cx));
+                    let view = cx.new(|cx| {
+                        SettingsWindow::new(
+                            parent,
+                            language,
+                            theme,
+                            dark_terminal_theme,
+                            light_terminal_theme,
+                            window,
+                            cx,
+                        )
+                    });
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )

@@ -37,13 +37,33 @@ pub(crate) enum TextKey {
     ManualPassword,
     DirectKey,
     Settings,
+    Appearance,
     Theme,
+    TerminalTheme,
+    DarkTerminalTheme,
+    LightTerminalTheme,
     LightTheme,
     DarkTheme,
     Language,
 }
 
 impl Language {
+    pub(crate) fn from_setting_value(value: &str) -> Self {
+        match value {
+            "en" => Self::En,
+            "ja" => Self::Ja,
+            _ => Self::Zh,
+        }
+    }
+
+    pub(crate) fn setting_value(self) -> &'static str {
+        match self {
+            Self::Zh => "zh",
+            Self::En => "en",
+            Self::Ja => "ja",
+        }
+    }
+
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Zh => "中文",
@@ -91,7 +111,11 @@ impl Language {
                 TextKey::ManualPassword => "手动密码",
                 TextKey::DirectKey => "直接密钥",
                 TextKey::Settings => "设置",
+                TextKey::Appearance => "外观",
                 TextKey::Theme => "主题",
+                TextKey::TerminalTheme => "终端主题",
+                TextKey::DarkTerminalTheme => "暗色终端主题",
+                TextKey::LightTerminalTheme => "亮色终端主题",
                 TextKey::LightTheme => "浅色",
                 TextKey::DarkTheme => "深色",
                 TextKey::Language => "语言",
@@ -124,7 +148,11 @@ impl Language {
                 TextKey::ManualPassword => "Manual Password",
                 TextKey::DirectKey => "Direct key",
                 TextKey::Settings => "Settings",
+                TextKey::Appearance => "Appearance",
                 TextKey::Theme => "Theme",
+                TextKey::TerminalTheme => "Terminal theme",
+                TextKey::DarkTerminalTheme => "Dark terminal theme",
+                TextKey::LightTerminalTheme => "Light terminal theme",
                 TextKey::LightTheme => "Light",
                 TextKey::DarkTheme => "Dark",
                 TextKey::Language => "Language",
@@ -157,7 +185,11 @@ impl Language {
                 TextKey::ManualPassword => "手動パスワード",
                 TextKey::DirectKey => "直接キー",
                 TextKey::Settings => "設定",
+                TextKey::Appearance => "外観",
                 TextKey::Theme => "テーマ",
+                TextKey::TerminalTheme => "ターミナルテーマ",
+                TextKey::DarkTerminalTheme => "ダークターミナルテーマ",
+                TextKey::LightTerminalTheme => "ライトターミナルテーマ",
                 TextKey::LightTheme => "ライト",
                 TextKey::DarkTheme => "ダーク",
                 TextKey::Language => "言語",

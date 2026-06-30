@@ -15,9 +15,21 @@ use super::{AuthenticationMode, ServerConnectionDraft, ServerResource, SshConnec
 
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TerminalSize {
+    pub(crate) cols: u16,
+    pub(crate) rows: u16,
+}
+
+impl TerminalSize {
+    pub(crate) const fn new(cols: u16, rows: u16) -> Self {
+        Self { cols, rows }
+    }
+}
+
 pub(crate) enum TerminalCommand {
     Input(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize(TerminalSize),
     Close,
 }
 
@@ -33,12 +45,46 @@ pub(crate) struct TerminalHandle {
     pub(crate) events: Receiver<TerminalEvent>,
 }
 
-pub(crate) fn open_ssh_terminal(server: ServerResource, cols: u16, rows: u16) -> TerminalHandle {
+#[derive(Default)]
+struct PendingSshTerminalCommands {
+    input: Vec<u8>,
+    resize: Option<TerminalSize>,
+}
+
+impl PendingSshTerminalCommands {
+    fn push_input(&mut self, bytes: Vec<u8>) {
+        self.input.extend(bytes);
+    }
+
+    fn set_resize(&mut self, size: TerminalSize) {
+        self.resize = Some(size);
+    }
+
+    fn flush_resize(&mut self, channel: &mut ssh2::Channel) -> Result<()> {
+        if let Some(size) = self.resize
+            && try_resize_terminal(channel, size)?
+        {
+            self.resize = None;
+        }
+
+        Ok(())
+    }
+
+    fn flush_input(&mut self, channel: &mut ssh2::Channel) -> Result<()> {
+        if !self.input.is_empty() {
+            write_pending_input(channel, &mut self.input)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub(crate) fn open_ssh_terminal(server: ServerResource, size: TerminalSize) -> TerminalHandle {
     let (input, input_rx) = mpsc::channel();
     let (event_tx, events) = mpsc::channel();
 
     thread::spawn(move || {
-        if let Err(error) = run_ssh_terminal(server, cols, rows, input_rx, event_tx.clone()) {
+        if let Err(error) = run_ssh_terminal(server, size, input_rx, event_tx.clone()) {
             let _ = event_tx.send(TerminalEvent::Error(error.to_string()));
         }
     });
@@ -46,12 +92,12 @@ pub(crate) fn open_ssh_terminal(server: ServerResource, cols: u16, rows: u16) ->
     TerminalHandle { input, events }
 }
 
-pub(crate) fn open_local_terminal(cols: u16, rows: u16) -> TerminalHandle {
+pub(crate) fn open_local_terminal(size: TerminalSize) -> TerminalHandle {
     let (input, input_rx) = mpsc::channel();
     let (event_tx, events) = mpsc::channel();
 
     thread::spawn(move || {
-        if let Err(error) = run_local_terminal(cols, rows, input_rx, event_tx.clone()) {
+        if let Err(error) = run_local_terminal(size, input_rx, event_tx.clone()) {
             let _ = event_tx.send(TerminalEvent::Error(error.to_string()));
         }
     });
@@ -87,14 +133,13 @@ pub(crate) fn spawn_ssh_connection_test<T: Send + 'static>(
 }
 
 fn run_local_terminal(
-    cols: u16,
-    rows: u16,
+    size: TerminalSize,
     input_rx: Receiver<TerminalCommand>,
     event_tx: Sender<TerminalEvent>,
 ) -> Result<()> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(pty_size(cols, rows))
+        .openpty(pty_size(size))
         .context("创建本机 PTY 失败")?;
     let shell = env::var("SHELL")
         .ok()
@@ -156,8 +201,7 @@ fn run_local_terminal(
 
 fn run_ssh_terminal(
     server: ServerResource,
-    cols: u16,
-    rows: u16,
+    size: TerminalSize,
     input_rx: Receiver<TerminalCommand>,
     event_tx: Sender<TerminalEvent>,
 ) -> Result<()> {
@@ -172,18 +216,18 @@ fn run_ssh_terminal(
         .request_pty(
             "xterm-256color",
             None,
-            Some((cols.into(), rows.into(), 0, 0)),
+            Some((size.cols.into(), size.rows.into(), 0, 0)),
         )
         .context("请求 SSH PTY 失败")?;
     channel.shell().context("启动 SSH shell 失败")?;
     session.set_blocking(false);
 
     let _ = event_tx.send(TerminalEvent::Connected);
-    let mut pending_input = Vec::new();
+    let mut pending_commands = PendingSshTerminalCommands::default();
     let mut buffer = [0_u8; 8192];
 
     loop {
-        match drain_terminal_commands(&mut channel, &input_rx, &mut pending_input) {
+        match drain_ssh_terminal_commands(&mut channel, &input_rx, &mut pending_commands) {
             Ok(true) => return Ok(()),
             Ok(false) => {}
             Err(error) => {
@@ -192,9 +236,8 @@ fn run_ssh_terminal(
             }
         }
 
-        if !pending_input.is_empty() {
-            write_pending_input(&mut channel, &mut pending_input)?;
-        }
+        pending_commands.flush_resize(&mut channel)?;
+        pending_commands.flush_input(&mut channel)?;
 
         loop {
             match channel.read(&mut buffer) {
@@ -222,15 +265,15 @@ fn run_ssh_terminal(
     }
 }
 
-fn drain_terminal_commands(
+fn drain_ssh_terminal_commands(
     channel: &mut ssh2::Channel,
     input_rx: &Receiver<TerminalCommand>,
-    pending_input: &mut Vec<u8>,
+    pending_commands: &mut PendingSshTerminalCommands,
 ) -> Result<bool> {
     loop {
         match input_rx.try_recv() {
-            Ok(TerminalCommand::Input(bytes)) => pending_input.extend(bytes),
-            Ok(TerminalCommand::Resize { cols, rows }) => resize_terminal(channel, cols, rows)?,
+            Ok(TerminalCommand::Input(bytes)) => pending_commands.push_input(bytes),
+            Ok(TerminalCommand::Resize(size)) => pending_commands.set_resize(size),
             Ok(TerminalCommand::Close) => {
                 let _ = channel.close();
                 return Ok(true);
@@ -252,8 +295,8 @@ fn drain_local_terminal_commands(
     loop {
         match input_rx.try_recv() {
             Ok(TerminalCommand::Input(bytes)) => writer.write_all(&bytes)?,
-            Ok(TerminalCommand::Resize { cols, rows }) => {
-                master.resize(pty_size(cols, rows))?;
+            Ok(TerminalCommand::Resize(size)) => {
+                master.resize(pty_size(size))?;
             }
             Ok(TerminalCommand::Close) => return Ok(true),
             Err(TryRecvError::Empty) => return Ok(false),
@@ -262,14 +305,14 @@ fn drain_local_terminal_commands(
     }
 }
 
-fn resize_terminal(channel: &mut ssh2::Channel, cols: u16, rows: u16) -> Result<()> {
-    match channel.request_pty_size(cols.into(), rows.into(), None, None) {
-        Ok(()) => Ok(()),
+fn try_resize_terminal(channel: &mut ssh2::Channel, size: TerminalSize) -> Result<bool> {
+    match channel.request_pty_size(size.cols.into(), size.rows.into(), None, None) {
+        Ok(()) => Ok(true),
         Err(error) => {
             let message = error.to_string();
             let io_error: std::io::Error = error.into();
             if io_error.kind() == ErrorKind::WouldBlock {
-                return Ok(());
+                return Ok(false);
             }
 
             Err(anyhow!(message))
@@ -277,10 +320,10 @@ fn resize_terminal(channel: &mut ssh2::Channel, cols: u16, rows: u16) -> Result<
     }
 }
 
-fn pty_size(cols: u16, rows: u16) -> PtySize {
+fn pty_size(size: TerminalSize) -> PtySize {
     PtySize {
-        rows,
-        cols,
+        rows: size.rows,
+        cols: size.cols,
         pixel_width: 0,
         pixel_height: 0,
     }

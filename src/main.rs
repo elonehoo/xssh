@@ -71,8 +71,9 @@ mod tests {
 
     use crate::{
         ipc::{
-            AuthenticationMode, ServerDraft, applied_migration_count, delete_server, insert_server,
-            load_servers, migrate_database, update_server,
+            AppSettingsData, AuthenticationMode, ServerDraft, applied_migration_count,
+            delete_server, insert_server, load_app_settings, load_servers, migrate_database,
+            save_app_settings, update_server,
         },
         ui::{AppAssets, icons},
     };
@@ -142,6 +143,26 @@ mod tests {
         delete_server(&mut connection, server.id).unwrap();
         let servers = load_servers(&mut connection).unwrap();
         assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn persists_app_settings_json() {
+        let mut connection = SqliteConnection::establish(":memory:").unwrap();
+        migrate_database(&mut connection).unwrap();
+
+        let default_settings = load_app_settings(&mut connection).unwrap();
+        assert_eq!(default_settings, AppSettingsData::default());
+
+        let settings = AppSettingsData {
+            language: "en".to_string(),
+            theme: "light".to_string(),
+            dark_terminal_theme: "tokyonight".to_string(),
+            light_terminal_theme: "one_light".to_string(),
+        };
+        save_app_settings(&mut connection, &settings).unwrap();
+
+        let reloaded = load_app_settings(&mut connection).unwrap();
+        assert_eq!(reloaded, settings);
     }
 
     #[test]
