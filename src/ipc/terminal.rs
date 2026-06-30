@@ -9,7 +9,7 @@ use std::{
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as AnyhowContext, Result, anyhow};
@@ -19,6 +19,11 @@ use ssh2::{OpenFlags, OpenType, Session};
 use super::{AuthenticationMode, ServerConnectionDraft, ServerResource, SshConnectionTestResult};
 
 const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const XSSH_CWD_OSC_PREFIX: &[u8] = b"\x1b]777;xssh-cwd=";
+const STANDARD_CWD_OSC_PREFIX: &[u8] = b"\x1b]7;file://";
+const HIDDEN_CWD_QUERY_COMMAND: &str =
+    " d=$(pwd -P 2>/dev/null) && printf '\\033]777;xssh-cwd=%s\\007' \"$d\"\n";
+const HIDDEN_CWD_QUERY_TIMEOUT: Duration = Duration::from_millis(1200);
 static NEXT_UPLOAD_TASK_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,10 +41,7 @@ impl TerminalSize {
 pub(crate) enum TerminalCommand {
     Input(Vec<u8>),
     Resize(TerminalSize),
-    UploadFiles {
-        paths: Vec<PathBuf>,
-        remote_directory_hint: Option<String>,
-    },
+    UploadFiles { paths: Vec<PathBuf> },
     Close,
 }
 
@@ -96,7 +98,6 @@ struct PendingSshTerminalCommands {
 
 struct PendingUploadFiles {
     paths: Vec<PathBuf>,
-    remote_directory_hint: Option<String>,
 }
 
 impl PendingSshTerminalCommands {
@@ -109,11 +110,8 @@ impl PendingSshTerminalCommands {
         self.resize = Some(size);
     }
 
-    fn push_upload_files(&mut self, paths: Vec<PathBuf>, remote_directory_hint: Option<String>) {
-        self.upload_files.push(PendingUploadFiles {
-            paths,
-            remote_directory_hint,
-        });
+    fn push_upload_files(&mut self, paths: Vec<PathBuf>) {
+        self.upload_files.push(PendingUploadFiles { paths });
     }
 
     fn flush_resize(&mut self, channel: &mut ssh2::Channel) -> Result<()> {
@@ -132,6 +130,10 @@ impl PendingSshTerminalCommands {
         }
 
         Ok(())
+    }
+
+    fn has_input(&self) -> bool {
+        !self.input.is_empty()
     }
 
     fn take_upload_files(&mut self) -> Vec<PendingUploadFiles> {
@@ -158,6 +160,10 @@ impl Default for TerminalInputTracker {
 }
 
 impl TerminalInputTracker {
+    fn has_pending_line_input(&self) -> bool {
+        !self.line.is_empty()
+    }
+
     fn push(&mut self, bytes: &[u8]) -> Vec<String> {
         let mut submitted = Vec::new();
 
@@ -192,24 +198,9 @@ impl TerminalInputTracker {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum RemoteDirectoryEffect {
-    Unchanged,
-    Change(RemoteDirectoryTarget),
-    Unknown,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum RemoteDirectoryTarget {
-    Home,
-    Previous,
-    Path(String),
-}
-
 #[derive(Debug)]
 struct RemoteDirectoryTracker {
-    current: Option<String>,
-    previous: Option<String>,
+    confirmed: Option<String>,
 }
 
 #[derive(Default)]
@@ -219,33 +210,45 @@ struct RemotePwdOutputTracker {
 }
 
 #[derive(Default)]
+struct RemoteDirectoryOutputFilter {
+    pending: Vec<u8>,
+    suppress_until_user_input: bool,
+}
+
+#[derive(Default)]
+struct RemoteDirectoryResolver {
+    directory: RemoteDirectoryTracker,
+    pwd_output_tracker: RemotePwdOutputTracker,
+    output_filter: RemoteDirectoryOutputFilter,
+}
+
+#[derive(Default)]
 struct UploadSummary {
     succeeded: usize,
     failed: usize,
 }
 
+impl Default for RemoteDirectoryTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemoteDirectoryTracker {
-    fn new(current: Option<String>) -> Self {
-        Self {
-            current,
-            previous: None,
-        }
+    fn new() -> Self {
+        Self { confirmed: None }
     }
 
-    fn current(&self) -> Option<&str> {
-        self.current.as_deref()
+    fn confirmed_current(&self) -> Option<&str> {
+        self.confirmed.as_deref()
     }
 
-    fn mark_unknown(&mut self) {
-        self.current = None;
+    fn mark_unconfirmed(&mut self) {
+        self.confirmed = None;
     }
 
     fn apply_resolved(&mut self, directory: String) {
-        if self.current.as_deref() == Some(directory.as_str()) {
-            return;
-        }
-
-        self.previous = self.current.replace(directory);
+        self.confirmed = Some(directory);
     }
 }
 
@@ -280,6 +283,207 @@ impl RemotePwdOutputTracker {
         self.pending = false;
         self.buffer.clear();
         Some(directory)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RemoteDirectoryOutputEvent {
+    XsshCwdOsc,
+    StandardCwdOsc,
+}
+
+struct OscTerminator {
+    content_end: usize,
+    sequence_end: usize,
+}
+
+impl RemoteDirectoryOutputFilter {
+    fn before_user_input(&mut self) {
+        self.pending.clear();
+        self.suppress_until_user_input = false;
+    }
+
+    fn begin_hidden_directory_query(&mut self) {
+        self.pending.clear();
+        self.suppress_until_user_input = true;
+    }
+
+    fn push_output(&mut self, bytes: &[u8]) -> (Vec<u8>, Vec<String>) {
+        self.pending.extend_from_slice(bytes);
+
+        let mut output = Vec::new();
+        let mut directories = Vec::new();
+
+        loop {
+            let Some((event_index, event)) = self.next_event() else {
+                let tail_len = partial_remote_directory_event_tail_len(&self.pending);
+                let emit_len = self.pending.len().saturating_sub(tail_len);
+                self.drain_pending_prefix(emit_len, &mut output);
+                break;
+            };
+
+            self.drain_pending_prefix(event_index, &mut output);
+
+            match event {
+                RemoteDirectoryOutputEvent::XsshCwdOsc => {
+                    let Some(terminator) =
+                        find_osc_terminator(&self.pending, XSSH_CWD_OSC_PREFIX.len())
+                    else {
+                        break;
+                    };
+
+                    if let Some(directory) = parse_xssh_cwd_osc_path(
+                        &self.pending[XSSH_CWD_OSC_PREFIX.len()..terminator.content_end],
+                    ) {
+                        directories.push(directory);
+                    }
+
+                    self.pending.drain(..terminator.sequence_end);
+                }
+                RemoteDirectoryOutputEvent::StandardCwdOsc => {
+                    let Some(terminator) =
+                        find_osc_terminator(&self.pending, STANDARD_CWD_OSC_PREFIX.len())
+                    else {
+                        break;
+                    };
+
+                    if let Some(directory) = parse_standard_cwd_osc_path(
+                        &self.pending[STANDARD_CWD_OSC_PREFIX.len()..terminator.content_end],
+                    ) {
+                        directories.push(directory);
+                    }
+
+                    self.pending.drain(..terminator.sequence_end);
+                }
+            }
+        }
+
+        (output, directories)
+    }
+
+    fn next_event(&self) -> Option<(usize, RemoteDirectoryOutputEvent)> {
+        let mut next = None;
+        next = nearest_event(
+            next,
+            find_subslice(&self.pending, XSSH_CWD_OSC_PREFIX),
+            RemoteDirectoryOutputEvent::XsshCwdOsc,
+        );
+        nearest_event(
+            next,
+            find_subslice(&self.pending, STANDARD_CWD_OSC_PREFIX),
+            RemoteDirectoryOutputEvent::StandardCwdOsc,
+        )
+    }
+
+    fn drain_pending_prefix(&mut self, len: usize, output: &mut Vec<u8>) {
+        if len == 0 {
+            return;
+        }
+
+        let drained = self.pending.drain(..len).collect::<Vec<_>>();
+        if !self.suppress_until_user_input {
+            output.extend(drained);
+        }
+    }
+}
+
+impl RemoteDirectoryResolver {
+    fn before_user_input(&mut self) {
+        self.output_filter.before_user_input();
+    }
+
+    fn observe_submitted_lines(&mut self, lines: &[String]) {
+        self.pwd_output_tracker.observe_submitted_lines(lines);
+
+        if lines.iter().any(|line| !line.trim().is_empty()) {
+            self.directory.mark_unconfirmed();
+        }
+    }
+
+    fn confirmed_directory_for_upload(
+        &mut self,
+        channel: &mut ssh2::Channel,
+        event_tx: &Sender<TerminalEvent>,
+        buffer: &mut [u8],
+        allow_hidden_query: bool,
+    ) -> Result<Option<String>> {
+        if let Some(directory) = self.directory.confirmed_current() {
+            return Ok(Some(directory.to_string()));
+        }
+
+        if allow_hidden_query {
+            let _ = self.refresh_from_shell(channel, event_tx, buffer)?;
+        }
+
+        Ok(self.directory.confirmed_current().map(ToString::to_string))
+    }
+
+    fn refresh_from_shell(
+        &mut self,
+        channel: &mut ssh2::Channel,
+        event_tx: &Sender<TerminalEvent>,
+        buffer: &mut [u8],
+    ) -> Result<bool> {
+        let mut pending_input = HIDDEN_CWD_QUERY_COMMAND.as_bytes().to_vec();
+        let started_at = Instant::now();
+        self.output_filter.begin_hidden_directory_query();
+
+        while started_at.elapsed() < HIDDEN_CWD_QUERY_TIMEOUT {
+            if !pending_input.is_empty() {
+                write_pending_input(channel, &mut pending_input)?;
+            }
+
+            let mut resolved = false;
+            loop {
+                match channel.read(buffer) {
+                    Ok(0) => break,
+                    Ok(size) => {
+                        resolved |= self.process_output(&buffer[..size], event_tx);
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        if error.kind() == ErrorKind::WouldBlock {
+                            break;
+                        }
+
+                        return Err(anyhow!(message));
+                    }
+                }
+            }
+
+            if resolved {
+                return Ok(true);
+            }
+
+            if channel.eof() {
+                return Ok(false);
+            }
+
+            thread::sleep(Duration::from_millis(8));
+        }
+
+        Ok(false)
+    }
+
+    fn process_output(&mut self, bytes: &[u8], event_tx: &Sender<TerminalEvent>) -> bool {
+        let (filtered_output, directories) = self.output_filter.push_output(bytes);
+        let mut resolved = false;
+
+        for directory in directories {
+            self.directory.apply_resolved(directory);
+            resolved = true;
+        }
+
+        if let Some(directory) = self.pwd_output_tracker.push_output(&filtered_output) {
+            self.directory.apply_resolved(directory);
+            resolved = true;
+        }
+
+        if !filtered_output.is_empty() {
+            let _ = event_tx.send(TerminalEvent::Output(filtered_output));
+        }
+
+        resolved
     }
 }
 
@@ -414,7 +618,6 @@ fn run_ssh_terminal(
     let port = u16::try_from(server.port).context("SSH 端口不是有效端口")?;
     let session =
         authenticated_ssh_session(&server.host, port, &server.username, &server.password, None)?;
-    let initial_remote_directory = remote_pwd(&session).ok();
 
     let mut channel = session.channel_session().context("创建 SSH channel 失败")?;
     channel
@@ -428,8 +631,7 @@ fn run_ssh_terminal(
     session.set_blocking(false);
 
     let _ = event_tx.send(TerminalEvent::Connected);
-    let mut remote_directory = RemoteDirectoryTracker::new(initial_remote_directory);
-    let mut pwd_output_tracker = RemotePwdOutputTracker::default();
+    let mut remote_directory = RemoteDirectoryResolver::default();
     let mut pending_commands = PendingSshTerminalCommands::default();
     let mut input_tracker = TerminalInputTracker::default();
     let mut buffer = [0_u8; 8192];
@@ -450,28 +652,28 @@ fn run_ssh_terminal(
         }
 
         pending_commands.flush_resize(&mut channel)?;
+        if pending_commands.has_input() {
+            remote_directory.before_user_input();
+        }
         pending_commands.flush_input(&mut channel)?;
         let submitted_lines = pending_commands.take_submitted_lines();
-        pwd_output_tracker.observe_submitted_lines(&submitted_lines);
-        apply_submitted_lines_to_remote_directory(&server, &mut remote_directory, submitted_lines);
+        remote_directory.observe_submitted_lines(&submitted_lines);
         for upload in pending_commands.take_upload_files() {
-            spawn_sftp_uploads(
-                &server,
-                &remote_directory,
-                upload.paths,
-                upload.remote_directory_hint,
+            let upload_directory = remote_directory.confirmed_directory_for_upload(
+                &mut channel,
                 &event_tx,
-            );
+                &mut buffer,
+                !input_tracker.has_pending_line_input(),
+            )?;
+
+            spawn_sftp_uploads(&server, upload_directory, upload.paths, &event_tx);
         }
 
         loop {
             match channel.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(size) => {
-                    if let Some(directory) = pwd_output_tracker.push_output(&buffer[..size]) {
-                        remote_directory.apply_resolved(directory);
-                    }
-                    let _ = event_tx.send(TerminalEvent::Output(buffer[..size].to_vec()));
+                    remote_directory.process_output(&buffer[..size], &event_tx);
                 }
                 Err(error) => {
                     let message = error.to_string();
@@ -505,10 +707,7 @@ fn drain_ssh_terminal_commands(
                 pending_commands.push_input(bytes, input_tracker);
             }
             Ok(TerminalCommand::Resize(size)) => pending_commands.set_resize(size),
-            Ok(TerminalCommand::UploadFiles {
-                paths,
-                remote_directory_hint,
-            }) => pending_commands.push_upload_files(paths, remote_directory_hint),
+            Ok(TerminalCommand::UploadFiles { paths }) => pending_commands.push_upload_files(paths),
             Ok(TerminalCommand::Close) => {
                 let _ = channel.close();
                 return Ok(true);
@@ -541,30 +740,10 @@ fn drain_local_terminal_commands(
     }
 }
 
-fn apply_submitted_lines_to_remote_directory(
-    server: &ServerResource,
-    remote_directory: &mut RemoteDirectoryTracker,
-    submitted_lines: Vec<String>,
-) {
-    for line in submitted_lines {
-        match remote_directory_effect(&line) {
-            RemoteDirectoryEffect::Unchanged => {}
-            RemoteDirectoryEffect::Unknown => remote_directory.mark_unknown(),
-            RemoteDirectoryEffect::Change(target) => {
-                match resolve_remote_directory_target(server, remote_directory, target) {
-                    Ok(directory) => remote_directory.apply_resolved(directory),
-                    Err(_) => remote_directory.mark_unknown(),
-                }
-            }
-        }
-    }
-}
-
 fn spawn_sftp_uploads(
     server: &ServerResource,
-    remote_directory: &RemoteDirectoryTracker,
+    remote_directory: Option<String>,
     local_paths: Vec<PathBuf>,
-    remote_directory_hint: Option<String>,
     event_tx: &Sender<TerminalEvent>,
 ) {
     if local_paths.is_empty() {
@@ -572,11 +751,7 @@ fn spawn_sftp_uploads(
     }
 
     let task_id = next_upload_task_id();
-    let Some(remote_directory) = remote_directory
-        .current()
-        .map(ToString::to_string)
-        .or_else(|| remote_directory_hint.filter(|directory| is_absolute_remote_path(directory)))
-    else {
+    let Some(remote_directory) = remote_directory else {
         send_upload_task_event(
             event_tx,
             server,
@@ -591,8 +766,7 @@ fn spawn_sftp_uploads(
             server,
             task_id,
             UploadTaskEventKind::Failed {
-                error: "无法确定远端当前目录，请先执行 pwd 或使用普通 cd 命令进入目标目录后再拖拽上传。"
-                    .to_string(),
+                error: "无法自动确定远端当前目录，请回到 shell 提示符后重试拖拽上传。".to_string(),
             },
         );
         return;
@@ -744,115 +918,6 @@ fn upload_one_file(sftp: &ssh2::Sftp, remote_directory: &str, local_path: &Path)
     Ok(remote_path)
 }
 
-fn resolve_remote_directory_target(
-    server: &ServerResource,
-    remote_directory: &RemoteDirectoryTracker,
-    target: RemoteDirectoryTarget,
-) -> Result<String> {
-    validate_password_terminal(server)?;
-
-    let port = u16::try_from(server.port).context("SSH 端口不是有效端口")?;
-    let session =
-        authenticated_ssh_session(&server.host, port, &server.username, &server.password, None)?;
-    let command = remote_directory_command(remote_directory, target)?;
-
-    remote_pwd_command(&session, &command)
-}
-
-fn remote_pwd(session: &Session) -> Result<String> {
-    remote_pwd_command(session, "pwd -P")
-}
-
-fn remote_pwd_command(session: &Session, command: &str) -> Result<String> {
-    let mut channel = session.channel_session().context("创建 SSH channel 失败")?;
-    channel.exec(command).context("执行远端目录命令失败")?;
-
-    let mut output = String::new();
-    channel
-        .read_to_string(&mut output)
-        .context("读取远端目录失败")?;
-    let mut stderr = String::new();
-    let _ = channel.stderr().read_to_string(&mut stderr);
-    channel.wait_close().context("关闭远端目录命令失败")?;
-
-    if channel.exit_status().unwrap_or(1) != 0 {
-        let message = stderr.trim();
-        return Err(anyhow!(
-            "{}",
-            if message.is_empty() {
-                "远端目录命令失败"
-            } else {
-                message
-            }
-        ));
-    }
-
-    output
-        .lines()
-        .last()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToString::to_string)
-        .ok_or_else(|| anyhow!("远端目录为空"))
-}
-
-fn remote_directory_command(
-    remote_directory: &RemoteDirectoryTracker,
-    target: RemoteDirectoryTarget,
-) -> Result<String> {
-    match target {
-        RemoteDirectoryTarget::Home => Ok("cd && pwd -P".to_string()),
-        RemoteDirectoryTarget::Previous => {
-            let previous = remote_directory
-                .previous
-                .as_deref()
-                .ok_or_else(|| anyhow!("没有可用的上一个远端目录"))?;
-
-            Ok(format!("cd -- {} && pwd -P", shell_quote(previous)))
-        }
-        RemoteDirectoryTarget::Path(path) if path == "~" => Ok("cd && pwd -P".to_string()),
-        RemoteDirectoryTarget::Path(path) if path.starts_with("~/") => {
-            let relative_home_path = path.trim_start_matches("~/");
-
-            Ok(format!(
-                "cd && cd -- {} && pwd -P",
-                shell_quote(relative_home_path)
-            ))
-        }
-        RemoteDirectoryTarget::Path(path) if path.starts_with('/') => {
-            Ok(format!("cd -- {} && pwd -P", shell_quote(&path)))
-        }
-        RemoteDirectoryTarget::Path(path) => {
-            let current = remote_directory
-                .current()
-                .ok_or_else(|| anyhow!("无法确定当前远端目录"))?;
-
-            Ok(format!(
-                "cd -- {} && cd -- {} && pwd -P",
-                shell_quote(current),
-                shell_quote(&path)
-            ))
-        }
-    }
-}
-
-fn remote_directory_effect(line: &str) -> RemoteDirectoryEffect {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return RemoteDirectoryEffect::Unchanged;
-    }
-
-    let Some(command) = first_shell_word(trimmed) else {
-        return RemoteDirectoryEffect::Unknown;
-    };
-
-    match command.as_str() {
-        "cd" => cd_target_from_command(trimmed),
-        "pushd" | "popd" => RemoteDirectoryEffect::Unknown,
-        _ => RemoteDirectoryEffect::Unchanged,
-    }
-}
-
 fn is_pwd_command(line: &str) -> bool {
     let Some(words) = split_simple_shell_words(line) else {
         return false;
@@ -883,6 +948,118 @@ fn is_absolute_remote_path(path: &str) -> bool {
     path.starts_with('/') && !path.contains('\0')
 }
 
+fn nearest_event(
+    current: Option<(usize, RemoteDirectoryOutputEvent)>,
+    next_index: Option<usize>,
+    event: RemoteDirectoryOutputEvent,
+) -> Option<(usize, RemoteDirectoryOutputEvent)> {
+    match (current, next_index) {
+        (None, Some(index)) => Some((index, event)),
+        (Some((current_index, _)), Some(index)) if index < current_index => Some((index, event)),
+        (Some(current), _) => Some(current),
+        (None, None) => None,
+    }
+}
+
+fn partial_remote_directory_event_tail_len(bytes: &[u8]) -> usize {
+    partial_match_tail_len(bytes, XSSH_CWD_OSC_PREFIX)
+        .max(partial_match_tail_len(bytes, STANDARD_CWD_OSC_PREFIX))
+}
+
+fn partial_match_tail_len(bytes: &[u8], needle: &[u8]) -> usize {
+    let max_len = bytes.len().min(needle.len().saturating_sub(1));
+
+    (1..=max_len)
+        .rev()
+        .find(|&len| bytes[bytes.len() - len..] == needle[..len])
+        .unwrap_or(0)
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn find_osc_terminator(bytes: &[u8], content_start: usize) -> Option<OscTerminator> {
+    let mut index = content_start;
+
+    while index < bytes.len() {
+        if bytes[index] == b'\x07' {
+            return Some(OscTerminator {
+                content_end: index,
+                sequence_end: index + 1,
+            });
+        }
+
+        if bytes[index] == b'\x1b' && bytes.get(index + 1) == Some(&b'\\') {
+            return Some(OscTerminator {
+                content_end: index,
+                sequence_end: index + 2,
+            });
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+fn parse_xssh_cwd_osc_path(bytes: &[u8]) -> Option<String> {
+    let path = String::from_utf8(bytes.to_vec()).ok()?;
+
+    if is_absolute_remote_path(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn parse_standard_cwd_osc_path(bytes: &[u8]) -> Option<String> {
+    let path_start = bytes.iter().position(|&byte| byte == b'/')?;
+    let path = String::from_utf8(percent_decode_bytes(&bytes[path_start..])).ok()?;
+
+    if is_absolute_remote_path(&path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn percent_decode_bytes(bytes: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (bytes.get(index + 1), bytes.get(index + 2))
+            && let (Some(high), Some(low)) = (hex_value(*high), hex_value(*low))
+        {
+            decoded.push((high << 4) | low);
+            index += 3;
+            continue;
+        }
+
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    decoded
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn clean_terminal_text(text: &str) -> String {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut cleaned = String::new();
@@ -909,48 +1086,6 @@ fn clean_terminal_text(text: &str) -> String {
     }
 
     cleaned
-}
-
-fn cd_target_from_command(line: &str) -> RemoteDirectoryEffect {
-    let Some(words) = split_simple_shell_words(line) else {
-        return RemoteDirectoryEffect::Unknown;
-    };
-
-    if words.first().map(String::as_str) != Some("cd") {
-        return RemoteDirectoryEffect::Unchanged;
-    }
-
-    let args = cd_args(&words[1..]);
-    match args.as_slice() {
-        [] => RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Home),
-        [target] if target == "-" => RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Previous),
-        [target] if path_uses_shell_expansion(target) => RemoteDirectoryEffect::Unknown,
-        [target] => RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Path(target.clone())),
-        _ => RemoteDirectoryEffect::Unknown,
-    }
-}
-
-fn cd_args(args: &[String]) -> Vec<String> {
-    if args.first().map(String::as_str) == Some("--") {
-        args[1..].to_vec()
-    } else {
-        args.to_vec()
-    }
-}
-
-fn first_shell_word(line: &str) -> Option<String> {
-    let mut word = String::new();
-    let chars = line.trim_start().chars();
-
-    for char in chars {
-        match char {
-            char if char.is_whitespace() => break,
-            '\'' | '"' | '\\' | ';' | '&' | '|' | '<' | '>' | '(' | ')' => return None,
-            _ => word.push(char),
-        }
-    }
-
-    if word.is_empty() { None } else { Some(word) }
 }
 
 fn split_simple_shell_words(line: &str) -> Option<Vec<String>> {
@@ -990,18 +1125,6 @@ fn split_simple_shell_words(line: &str) -> Option<Vec<String>> {
     }
 
     Some(words)
-}
-
-fn path_uses_shell_expansion(path: &str) -> bool {
-    path.contains('$')
-        || path.contains('`')
-        || path.contains('*')
-        || path.contains('?')
-        || (path.starts_with('~') && path != "~" && !path.starts_with("~/"))
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn remote_child_path(remote_directory: &str, file_name: &str) -> String {
@@ -1180,7 +1303,9 @@ mod tests {
         let mut tracker = TerminalInputTracker::default();
 
         assert!(tracker.push(b"cd /var/www").is_empty());
+        assert!(tracker.has_pending_line_input());
         assert_eq!(tracker.push(b"\r"), vec!["cd /var/www".to_string()]);
+        assert!(!tracker.has_pending_line_input());
     }
 
     #[test]
@@ -1195,54 +1320,6 @@ mod tests {
         tracker.push(&[0x15]);
         tracker.push(b"cd /right");
         assert_eq!(tracker.push(b"\r"), vec!["cd /right".to_string()]);
-    }
-
-    #[test]
-    fn parses_simple_cd_commands() {
-        assert_eq!(
-            remote_directory_effect("cd /srv/app"),
-            RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Path("/srv/app".to_string()))
-        );
-        assert_eq!(
-            remote_directory_effect("cd \"release build\""),
-            RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Path("release build".to_string()))
-        );
-        assert_eq!(
-            remote_directory_effect("cd"),
-            RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Home)
-        );
-        assert_eq!(
-            remote_directory_effect("cd -"),
-            RemoteDirectoryEffect::Change(RemoteDirectoryTarget::Previous)
-        );
-    }
-
-    #[test]
-    fn marks_complex_directory_changes_unknown() {
-        assert_eq!(
-            remote_directory_effect("cd $PROJECT"),
-            RemoteDirectoryEffect::Unknown
-        );
-        assert_eq!(
-            remote_directory_effect("cd ~deploy"),
-            RemoteDirectoryEffect::Unknown
-        );
-        assert_eq!(
-            remote_directory_effect("cd /tmp && cd other"),
-            RemoteDirectoryEffect::Unknown
-        );
-        assert_eq!(
-            remote_directory_effect("pushd /tmp"),
-            RemoteDirectoryEffect::Unknown
-        );
-    }
-
-    #[test]
-    fn leaves_unrelated_commands_unchanged() {
-        assert_eq!(
-            remote_directory_effect("echo hello && pwd"),
-            RemoteDirectoryEffect::Unchanged
-        );
     }
 
     #[test]
@@ -1291,6 +1368,84 @@ mod tests {
     }
 
     #[test]
+    fn remote_directory_tracker_requires_confirmed_path() {
+        let mut tracker = RemoteDirectoryTracker::new();
+        assert_eq!(tracker.confirmed_current(), None);
+
+        tracker.apply_resolved("/app".to_string());
+        assert_eq!(tracker.confirmed_current(), Some("/app"));
+
+        tracker.mark_unconfirmed();
+        assert_eq!(tracker.confirmed_current(), None);
+    }
+
+    #[test]
+    fn remote_directory_output_filter_reads_hidden_xssh_cwd() {
+        let mut filter = RemoteDirectoryOutputFilter::default();
+
+        let (output, directories) =
+            filter.push_output(b"before\x1b]777;xssh-cwd=/app/pubinfo-bot\x07after");
+
+        assert_eq!(output, b"beforeafter");
+        assert_eq!(directories, vec!["/app/pubinfo-bot".to_string()]);
+    }
+
+    #[test]
+    fn remote_directory_output_filter_handles_split_osc() {
+        let mut filter = RemoteDirectoryOutputFilter::default();
+
+        let (output, directories) = filter.push_output(b"before\x1b]777;xssh-cwd=/app");
+
+        assert_eq!(output, b"before");
+        assert!(directories.is_empty());
+
+        let (output, directories) = filter.push_output(b"\x1b\\after");
+
+        assert_eq!(output, b"after");
+        assert_eq!(directories, vec!["/app".to_string()]);
+    }
+
+    #[test]
+    fn remote_directory_output_filter_reads_standard_osc7() {
+        let mut filter = RemoteDirectoryOutputFilter::default();
+
+        let (output, directories) =
+            filter.push_output(b"\x1b]7;file://localhost/app/pubinfo-bot\x07$ ");
+
+        assert_eq!(output, b"$ ");
+        assert_eq!(directories, vec!["/app/pubinfo-bot".to_string()]);
+    }
+
+    #[test]
+    fn remote_directory_output_filter_decodes_standard_osc7_path() {
+        let mut filter = RemoteDirectoryOutputFilter::default();
+
+        let (output, directories) =
+            filter.push_output(b"\x1b]7;file://localhost/app/release%20build\x07");
+
+        assert!(output.is_empty());
+        assert_eq!(directories, vec!["/app/release build".to_string()]);
+    }
+
+    #[test]
+    fn remote_directory_output_filter_hides_explicit_directory_query() {
+        let mut filter = RemoteDirectoryOutputFilter::default();
+
+        filter.begin_hidden_directory_query();
+        let (output, directories) = filter.push_output(
+            b"$ d=$(pwd -P 2>/dev/null) && printf hidden\r\n\x1b]777;xssh-cwd=/app\x07$ ",
+        );
+
+        assert!(output.is_empty());
+        assert_eq!(directories, vec!["/app".to_string()]);
+
+        filter.before_user_input();
+        let (output, directories) = filter.push_output(b"pwd\r\n");
+        assert_eq!(output, b"pwd\r\n");
+        assert!(directories.is_empty());
+    }
+
+    #[test]
     fn upload_task_fails_without_known_remote_directory() {
         let server = ServerResource {
             id: 1,
@@ -1301,14 +1456,12 @@ mod tests {
             authentication: "Manual Password".to_string(),
             password: "secret".to_string(),
         };
-        let remote_directory = RemoteDirectoryTracker::new(None);
         let (event_tx, event_rx) = mpsc::channel();
 
         spawn_sftp_uploads(
             &server,
-            &remote_directory,
-            vec![PathBuf::from("/tmp/example.txt")],
             None,
+            vec![PathBuf::from("/tmp/example.txt")],
             &event_tx,
         );
 
@@ -1329,7 +1482,7 @@ mod tests {
         match event_rx.recv_timeout(Duration::from_secs(1)).unwrap() {
             TerminalEvent::UploadTask(event) => match event.kind {
                 UploadTaskEventKind::Failed { error } => {
-                    assert!(error.contains("无法确定远端当前目录"));
+                    assert!(error.contains("无法自动确定远端当前目录"));
                 }
                 _ => panic!("expected failed upload task event"),
             },
@@ -1344,11 +1497,5 @@ mod tests {
             remote_child_path("/srv/app/", "app.tar.gz"),
             "/srv/app/app.tar.gz"
         );
-    }
-
-    #[test]
-    fn quotes_remote_shell_paths() {
-        assert_eq!(shell_quote("/tmp/a b"), "'/tmp/a b'");
-        assert_eq!(shell_quote("/tmp/it's"), "'/tmp/it'\\''s'");
     }
 }

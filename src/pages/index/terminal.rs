@@ -234,37 +234,6 @@ impl TerminalSession {
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
-    fn remote_directory_hint_from_output(&self) -> Option<String> {
-        let mut expecting_pwd_output = false;
-        let mut latest_directory = None;
-
-        for row in 0..self.display_len() {
-            let Some(line) = self.display_line(row) else {
-                continue;
-            };
-            let text = line.copy_text();
-            let trimmed = text.trim();
-
-            if expecting_pwd_output {
-                if terminal_line_is_absolute_path(trimmed) {
-                    latest_directory = Some(trimmed.to_string());
-                    expecting_pwd_output = false;
-                    continue;
-                }
-
-                if !trimmed.is_empty() && !terminal_line_contains_pwd_command(trimmed) {
-                    expecting_pwd_output = false;
-                }
-            }
-
-            if terminal_line_contains_pwd_command(trimmed) {
-                expecting_pwd_output = true;
-            }
-        }
-
-        latest_directory
-    }
-
     pub(super) fn selection_range_for_line(
         &self,
         row: usize,
@@ -1071,12 +1040,7 @@ impl Xssh {
             return false;
         };
 
-        input
-            .send(TerminalCommand::UploadFiles {
-                paths,
-                remote_directory_hint: session.remote_directory_hint_from_output(),
-            })
-            .is_ok()
+        input.send(TerminalCommand::UploadFiles { paths }).is_ok()
     }
 
     fn server_name(&self, server_id: i32) -> String {
@@ -1340,52 +1304,6 @@ fn terminal_text_bytes(text: &str) -> Option<Vec<u8>> {
     Some(text.as_bytes().to_vec())
 }
 
-fn terminal_line_contains_pwd_command(line: &str) -> bool {
-    let trimmed = line.trim();
-    if terminal_line_is_pwd_command(trimmed) {
-        return true;
-    }
-
-    let Some(pwd_index) = trimmed.rfind("pwd") else {
-        return false;
-    };
-    let prefix = trimmed[..pwd_index].trim_end();
-    let suffix = trimmed[pwd_index + "pwd".len()..].trim_start();
-
-    if !prefix.ends_with(['#', '$', '>', '%']) {
-        return false;
-    }
-
-    terminal_pwd_suffix_is_supported(suffix)
-}
-
-fn terminal_line_is_pwd_command(line: &str) -> bool {
-    let Some(suffix) = line.strip_prefix("pwd") else {
-        return false;
-    };
-
-    suffix.is_empty()
-        || suffix
-            .chars()
-            .next()
-            .is_some_and(|character| character.is_whitespace())
-            && terminal_pwd_suffix_is_supported(suffix.trim_start())
-}
-
-fn terminal_pwd_suffix_is_supported(suffix: &str) -> bool {
-    suffix.split_whitespace().all(|arg| {
-        arg.starts_with('-')
-            && arg
-                .trim_start_matches('-')
-                .chars()
-                .all(|flag| flag == 'L' || flag == 'P')
-    })
-}
-
-fn terminal_line_is_absolute_path(line: &str) -> bool {
-    line.starts_with('/') && !line.contains('\0')
-}
-
 fn terminal_tab_bytes(keystroke: &Keystroke) -> Option<Vec<u8>> {
     if keystroke.key != "tab"
         || keystroke.modifiers.platform
@@ -1608,44 +1526,6 @@ mod tests {
             Some(session.display_len().saturating_sub(1))
         );
         assert_eq!(session.take_pending_scroll_target(), None);
-    }
-
-    #[test]
-    fn reads_remote_directory_hint_from_pwd_output() {
-        let mut session = TerminalSession::new();
-
-        session.process_output(b"[root@localhost pubinfo-bot]# pwd\r\n/app/pubinfo-bot\r\n[root@localhost pubinfo-bot]# ");
-
-        assert_eq!(
-            session.remote_directory_hint_from_output(),
-            Some("/app/pubinfo-bot".to_string())
-        );
-    }
-
-    #[test]
-    fn uses_latest_remote_directory_hint_from_pwd_output() {
-        let mut session = TerminalSession::new();
-
-        session.process_output(b"$ pwd\r\n/old\r\n$ pwd -P\r\n/new\r\n$ ");
-
-        assert_eq!(
-            session.remote_directory_hint_from_output(),
-            Some("/new".to_string())
-        );
-    }
-
-    #[test]
-    fn detects_pwd_commands_in_terminal_lines() {
-        assert!(terminal_line_contains_pwd_command("pwd"));
-        assert!(terminal_line_contains_pwd_command("pwd -P"));
-        assert!(terminal_line_contains_pwd_command(
-            "[root@localhost app]# pwd"
-        ));
-        assert!(terminal_line_contains_pwd_command(
-            "user@host:/srv$ pwd -LP"
-        ));
-        assert!(!terminal_line_contains_pwd_command("echo pwd"));
-        assert!(!terminal_line_contains_pwd_command("pwd /tmp"));
     }
 
     #[test]
