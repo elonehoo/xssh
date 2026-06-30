@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::schema::{app_settings, servers};
 
@@ -70,19 +70,58 @@ pub(super) struct AppSettingsRow {
     pub(super) settings_data: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct AppSettingsData {
     pub(crate) language: String,
-    pub(crate) theme: String,
-    pub(crate) dark_terminal_theme: String,
-    pub(crate) light_terminal_theme: String,
+    pub(crate) app_theme: String,
 }
 
 impl Default for AppSettingsData {
     fn default() -> Self {
         Self {
             language: "zh".to_string(),
+            app_theme: "default-dark".to_string(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AppSettingsData {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawAppSettingsData::deserialize(deserializer)?;
+        let app_theme = if raw.app_theme.is_empty() {
+            match raw.theme.as_str() {
+                "light" => raw.light_terminal_theme,
+                _ => raw.dark_terminal_theme,
+            }
+        } else {
+            raw.app_theme
+        };
+
+        Ok(Self {
+            language: raw.language,
+            app_theme,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(default)]
+struct RawAppSettingsData {
+    language: String,
+    app_theme: String,
+    theme: String,
+    dark_terminal_theme: String,
+    light_terminal_theme: String,
+}
+
+impl Default for RawAppSettingsData {
+    fn default() -> Self {
+        Self {
+            language: "zh".to_string(),
+            app_theme: String::new(),
             theme: "dark".to_string(),
             dark_terminal_theme: "default-dark".to_string(),
             light_terminal_theme: "default-light".to_string(),

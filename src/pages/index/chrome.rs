@@ -3,7 +3,7 @@ use gpui::{
     WindowControlArea, div, prelude::*, px, rgb,
 };
 
-use crate::ui::{TextKey, ThemeMode, icons};
+use crate::ui::{AppThemeId, TextKey, icons};
 
 use super::{
     Xssh,
@@ -35,7 +35,7 @@ impl Xssh {
     }
 
     fn tab_close_icon(
-        theme: ThemeMode,
+        theme: AppThemeId,
         id: SharedString,
         group_name: SharedString,
         on_close: impl Fn(&mut App) + 'static,
@@ -52,7 +52,7 @@ impl Xssh {
             .size(px(22.))
             .rounded_sm()
             .bg(rgb(palette.icon_bg))
-            .hover(move |style| style.bg(rgb(palette.button_bg)))
+            .hover(move |style| style.bg(rgb(palette.button_hover)))
             .child(
                 div()
                     .absolute()

@@ -2,14 +2,14 @@ use std::{sync::mpsc::TryRecvError, time::Duration};
 
 use anyhow::Result;
 use gpui::{ClickEvent, Context, Window, WindowHandle};
-use gpui_component::{Root, Theme as ComponentTheme, WindowExt, notification::NotificationType};
+use gpui_component::{Root, WindowExt, notification::NotificationType};
 
 use crate::{
     ipc::{
         ServerConnectionDraft, ServerDraft, ServerResource, delete_server, insert_server,
         spawn_ssh_connection_test, update_server,
     },
-    ui::{Language, TerminalThemeId, TextKey, ThemeMode, status_notification},
+    ui::{AppThemeId, Language, TextKey, status_notification, sync_component_theme},
 };
 
 use super::{
@@ -119,32 +119,12 @@ impl Xssh {
 
     pub(in crate::pages) fn set_theme(
         &mut self,
-        theme: ThemeMode,
+        theme: AppThemeId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.theme = theme;
-        ComponentTheme::change(Self::component_theme_mode(theme), Some(window), cx);
-        self.persist_app_settings();
-        cx.notify();
-    }
-
-    pub(in crate::pages) fn set_dark_terminal_theme(
-        &mut self,
-        terminal_theme: TerminalThemeId,
-        cx: &mut Context<Self>,
-    ) {
-        self.dark_terminal_theme = terminal_theme;
-        self.persist_app_settings();
-        cx.notify();
-    }
-
-    pub(in crate::pages) fn set_light_terminal_theme(
-        &mut self,
-        terminal_theme: TerminalThemeId,
-        cx: &mut Context<Self>,
-    ) {
-        self.light_terminal_theme = terminal_theme;
+        sync_component_theme(theme, Some(window), cx);
         self.persist_app_settings();
         cx.notify();
     }

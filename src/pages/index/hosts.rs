@@ -204,7 +204,6 @@ impl Xssh {
                                 Self::on_open_create_host_window,
                             ))
                             .child(Self::secondary_button(
-                                self.theme,
                                 "terminal-button",
                                 language.tr(TextKey::Terminal),
                                 cx,

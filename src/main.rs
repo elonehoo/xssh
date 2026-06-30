@@ -63,8 +63,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use diesel::Connection;
     use diesel::sqlite::SqliteConnection;
+    use diesel::{Connection, prelude::*};
     use gpui::AssetSource;
 
     use crate::{
@@ -153,14 +153,47 @@ mod tests {
 
         let settings = AppSettingsData {
             language: "en".to_string(),
-            theme: "light".to_string(),
-            dark_terminal_theme: "tokyonight".to_string(),
-            light_terminal_theme: "one_light".to_string(),
+            app_theme: "tokyonight".to_string(),
         };
         save_app_settings(&mut connection, &settings).unwrap();
 
         let reloaded = load_app_settings(&mut connection).unwrap();
         assert_eq!(reloaded, settings);
+    }
+
+    #[test]
+    fn migrates_legacy_theme_settings_json() {
+        let mut connection = SqliteConnection::establish(":memory:").unwrap();
+        migrate_database(&mut connection).unwrap();
+
+        let legacy_settings = r#"{"language":"en","theme":"light","dark_terminal_theme":"tokyonight","light_terminal_theme":"one_light"}"#;
+        diesel::insert_into(crate::schema::app_settings::table)
+            .values((
+                crate::schema::app_settings::id.eq("default"),
+                crate::schema::app_settings::settings_data.eq(legacy_settings),
+                crate::schema::app_settings::created_at.eq("CURRENT_TIMESTAMP"),
+                crate::schema::app_settings::updated_at.eq("CURRENT_TIMESTAMP"),
+            ))
+            .execute(&mut connection)
+            .unwrap();
+
+        let loaded = load_app_settings(&mut connection).unwrap();
+        assert_eq!(
+            loaded,
+            AppSettingsData {
+                language: "en".to_string(),
+                app_theme: "one_light".to_string(),
+            }
+        );
+
+        let stored_settings = crate::schema::app_settings::table
+            .select(crate::schema::app_settings::settings_data)
+            .first::<String>(&mut connection)
+            .unwrap();
+        assert_eq!(
+            stored_settings,
+            r#"{"language":"en","app_theme":"one_light"}"#
+        );
     }
 
     #[test]

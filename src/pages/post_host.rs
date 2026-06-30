@@ -21,7 +21,7 @@ use crate::{
         AuthenticationMode, ServerConnectionDraft, ServerDraft, ServerResource,
         SshConnectionTestResult, spawn_ssh_connection_test,
     },
-    ui::{BASE_FONT_SIZE, Language, TextKey, ThemeMode, icons, status_notification},
+    ui::{AppThemeId, BASE_FONT_SIZE, Language, TextKey, icons, status_notification},
 };
 
 use super::Xssh;
@@ -41,7 +41,7 @@ pub(super) struct CreateHostWindow {
     parent: Entity<Xssh>,
     server_id: Option<i32>,
     language: Language,
-    theme: ThemeMode,
+    theme: AppThemeId,
     name_input: Entity<InputState>,
     host_input: Entity<InputState>,
     port_input: Entity<InputState>,
@@ -59,7 +59,7 @@ impl CreateHostWindow {
     pub(super) fn new(
         parent: Entity<Xssh>,
         language: Language,
-        theme: ThemeMode,
+        theme: AppThemeId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -69,7 +69,7 @@ impl CreateHostWindow {
     pub(super) fn edit(
         parent: Entity<Xssh>,
         language: Language,
-        theme: ThemeMode,
+        theme: AppThemeId,
         server: ServerResource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -85,7 +85,7 @@ impl CreateHostWindow {
         parent: Entity<Xssh>,
         server: Option<ServerResource>,
         language: Language,
-        theme: ThemeMode,
+        theme: AppThemeId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -378,7 +378,6 @@ impl CreateHostWindow {
     }
 
     fn button(
-        theme: ThemeMode,
         id: &'static str,
         text: &'static str,
         primary: bool,
@@ -386,28 +385,16 @@ impl CreateHostWindow {
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         let view = cx.entity();
-        let palette = theme.palette();
         let button = Button::new(id)
             .label(text)
             .rounded_sm()
-            .text_size(px(BASE_FONT_SIZE))
-            .bg(if primary {
-                rgb(palette.primary_bg)
-            } else {
-                rgb(palette.button_bg)
-            })
-            .border_color(if primary {
-                rgb(palette.primary_bg)
-            } else {
-                rgb(palette.button_border)
-            })
-            .text_color(if primary {
-                rgb(palette.primary_text)
-            } else {
-                rgb(palette.text)
-            });
+            .text_size(px(BASE_FONT_SIZE));
 
-        let button = if primary { button.primary() } else { button };
+        let button = if primary {
+            button.primary()
+        } else {
+            button.secondary()
+        };
 
         button.on_click(move |event, window, cx| {
             view.update(cx, |this, cx| on_click(this, event, window, cx));
@@ -547,7 +534,7 @@ impl CreateHostWindow {
     }
 
     fn password_input(
-        theme: ThemeMode,
+        theme: AppThemeId,
         input_state: Entity<InputState>,
         password_revealed: bool,
         cx: &mut Context<Self>,
@@ -581,7 +568,7 @@ impl CreateHostWindow {
     }
 
     fn password_eye_button(
-        theme: ThemeMode,
+        theme: AppThemeId,
         input_state: Entity<InputState>,
         view: Entity<Self>,
         password_revealed: bool,
@@ -601,8 +588,8 @@ impl CreateHostWindow {
             .size(px(28.))
             .rounded_sm()
             .child(icon)
-            .hover(move |style| style.bg(rgb(palette.panel_hover)))
-            .active(move |style| style.bg(rgb(palette.button_bg)))
+            .hover(move |style| style.bg(rgb(palette.button_hover)))
+            .active(move |style| style.bg(rgb(palette.button_active)))
             .on_mouse_down(MouseButton::Left, {
                 let input_state = input_state.clone();
                 let view = view.clone();
@@ -741,7 +728,6 @@ impl Render for CreateHostWindow {
                             .justify_end()
                             .gap_2()
                             .child(Self::button(
-                                self.theme,
                                 "test-host-connection-button",
                                 language.tr(TextKey::TestConnection),
                                 false,
@@ -749,7 +735,6 @@ impl Render for CreateHostWindow {
                                 Self::on_test_connection,
                             ))
                             .child(Self::button(
-                                self.theme,
                                 "cancel-create-host-button",
                                 language.tr(TextKey::Cancel),
                                 false,
@@ -757,7 +742,6 @@ impl Render for CreateHostWindow {
                                 Self::on_cancel,
                             ))
                             .child(Self::button(
-                                self.theme,
                                 "save-host-button",
                                 language.tr(TextKey::Save),
                                 true,

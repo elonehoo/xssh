@@ -8,12 +8,12 @@ use gpui_component::{
     input::{Input, InputState},
 };
 
-use crate::ui::{BASE_FONT_SIZE, ThemeMode, icons};
+use crate::ui::{AppThemeId, BASE_FONT_SIZE, icons};
 
 use super::Xssh;
 
 impl Xssh {
-    pub(in crate::pages) fn label(theme: ThemeMode, text: &str) -> impl IntoElement {
+    pub(in crate::pages) fn label(theme: AppThemeId, text: &str) -> impl IntoElement {
         let palette = theme.palette();
 
         div()
@@ -23,7 +23,7 @@ impl Xssh {
     }
 
     pub(in crate::pages) fn input(
-        theme: ThemeMode,
+        theme: AppThemeId,
         input_state: Entity<InputState>,
         masked: bool,
     ) -> impl IntoElement {
@@ -52,7 +52,7 @@ impl Xssh {
     }
 
     pub(in crate::pages) fn password_eye_button(
-        theme: ThemeMode,
+        theme: AppThemeId,
         input_state: Entity<InputState>,
     ) -> impl IntoElement {
         let palette = theme.palette();
@@ -65,8 +65,8 @@ impl Xssh {
             .size(px(28.))
             .rounded_sm()
             .child(icons::password_eye::icon(16., palette.muted))
-            .hover(move |style| style.bg(rgb(palette.panel_hover)))
-            .active(move |style| style.bg(rgb(palette.button_bg)))
+            .hover(move |style| style.bg(rgb(palette.button_hover)))
+            .active(move |style| style.bg(rgb(palette.button_active)))
             .on_mouse_down(MouseButton::Left, {
                 let input_state = input_state.clone();
                 move |_, window, cx| {
@@ -83,7 +83,7 @@ impl Xssh {
     }
 
     pub(in crate::pages) fn field(
-        theme: ThemeMode,
+        theme: AppThemeId,
         label: &str,
         input: Entity<InputState>,
         masked: bool,
@@ -98,7 +98,7 @@ impl Xssh {
     }
 
     pub(in crate::pages::index) fn primary_button(
-        theme: ThemeMode,
+        theme: AppThemeId,
         id: &'static str,
         text: &'static str,
         cx: &mut Context<Self>,
@@ -111,8 +111,6 @@ impl Xssh {
             .primary()
             .icon(icons::add::button_icon(palette.primary_text))
             .label(text)
-            .bg(rgb(palette.primary_bg))
-            .text_color(rgb(palette.primary_text))
             .rounded_sm()
             .text_size(px(BASE_FONT_SIZE))
             .on_click(move |event, window, cx| {
@@ -121,20 +119,16 @@ impl Xssh {
     }
 
     pub(in crate::pages::index) fn secondary_button(
-        theme: ThemeMode,
         id: &'static str,
         text: &'static str,
         cx: &mut Context<Self>,
         on_click: impl Fn(&mut Self, &ClickEvent, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         let view = cx.entity();
-        let palette = theme.palette();
 
         Button::new(id)
+            .secondary()
             .label(text)
-            .bg(rgb(palette.button_bg))
-            .border_color(rgb(palette.button_border))
-            .text_color(rgb(palette.text))
             .rounded_sm()
             .text_size(px(BASE_FONT_SIZE))
             .on_click(move |event, window, cx| {
@@ -142,7 +136,7 @@ impl Xssh {
             })
     }
 
-    pub(in crate::pages::index) fn server_icon(theme: ThemeMode) -> impl IntoElement {
+    pub(in crate::pages::index) fn server_icon(theme: AppThemeId) -> impl IntoElement {
         let palette = theme.palette();
 
         div()

@@ -1,6 +1,6 @@
 use gpui::{
     App, Bounds, ClickEvent, Context, Entity, Focusable, Window, WindowBounds, WindowKind,
-    WindowOptions, div, prelude::*, px, rgb, size,
+    WindowOptions, div, point, prelude::*, px, rgb, size,
 };
 use gpui_component::{
     Root, StyledExt, WindowExt,
@@ -10,7 +10,7 @@ use gpui_component::{
 
 use crate::{
     ipc::ServerResource,
-    ui::{BASE_FONT_SIZE, Language, TextKey, ThemeMode},
+    ui::{AppThemeId, BASE_FONT_SIZE, Language, TextKey},
 };
 
 use super::super::{post_host::CreateHostWindow, settings::SettingsWindow};
@@ -110,7 +110,7 @@ impl Xssh {
 
     pub(in crate::pages::index) fn open_delete_host_dialog(
         language: Language,
-        theme: ThemeMode,
+        theme: AppThemeId,
         server: ServerResource,
         view: Entity<Self>,
         window: &mut Window,
@@ -187,33 +187,24 @@ impl Xssh {
         let parent = cx.entity();
         let language = self.language;
         let theme = self.theme;
-        let dark_terminal_theme = self.dark_terminal_theme;
-        let light_terminal_theme = self.light_terminal_theme;
-        let bounds = Bounds::centered(None, size(px(780.), px(520.)), cx);
+        let bounds = Bounds::centered(None, size(px(640.), px(420.)), cx);
         let settings_window = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(680.), px(460.))),
+                    window_min_size: Some(size(px(560.), px(360.))),
                     kind: WindowKind::Normal,
                     titlebar: Some(gpui::TitlebarOptions {
                         title: Some(language.tr(TextKey::Settings).into()),
+                        appears_transparent: true,
+                        traffic_light_position: Some(point(px(12.), px(11.))),
                         ..Default::default()
                     }),
                     ..Default::default()
                 },
                 |window, cx| {
-                    let view = cx.new(|cx| {
-                        SettingsWindow::new(
-                            parent,
-                            language,
-                            theme,
-                            dark_terminal_theme,
-                            light_terminal_theme,
-                            window,
-                            cx,
-                        )
-                    });
+                    let view =
+                        cx.new(|cx| SettingsWindow::new(parent, language, theme, window, cx));
                     cx.new(|cx| Root::new(view, window, cx))
                 },
             )

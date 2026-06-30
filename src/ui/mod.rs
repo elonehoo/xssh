@@ -8,9 +8,8 @@ mod theme;
 
 pub(crate) use assets::AppAssets;
 pub(crate) use base46::{
-    TerminalThemeChoice, TerminalThemeId, TerminalThemeKind, TerminalThemePalette,
-    terminal_theme_options, terminal_theme_selected_index,
+    AppThemeChoice, AppThemeId, TerminalThemePalette, app_theme_options, app_theme_selected_index,
 };
 pub(crate) use i18n::{Language, LanguageChoice, TextKey};
 pub(crate) use notification::status_notification;
-pub(crate) use theme::{BASE_FONT_SIZE, ThemeChoice, ThemeMode};
+pub(crate) use theme::{BASE_FONT_SIZE, sync_component_theme};

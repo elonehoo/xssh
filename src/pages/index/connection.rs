@@ -27,7 +27,7 @@ impl Xssh {
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let terminal_palette = self.active_terminal_theme().palette();
+        let terminal_palette = self.active_terminal_palette();
         self.scroll_terminal_to_bottom_if_needed(TerminalId::Local);
 
         div()
@@ -61,7 +61,7 @@ impl Xssh {
                     .flex_col()
                     .size_full()
                     .overflow_hidden()
-                    .bg(rgb(self.active_terminal_theme().palette().background))
+                    .bg(rgb(self.active_terminal_palette().background))
                     .child(self.terminal_output(terminal_id, cx))
                     .into_any_element()
             }
@@ -79,7 +79,7 @@ impl Xssh {
 
     fn terminal_output(&self, terminal_id: TerminalId, cx: &mut Context<Self>) -> impl IntoElement {
         let language = self.language;
-        let terminal_palette = self.active_terminal_theme().palette();
+        let terminal_palette = self.active_terminal_palette();
         let focus_handle = self.focus_handle.clone();
         let resize_probe = terminal_resize_probe(cx.entity(), terminal_id);
         let terminal_list = self.terminal_sessions.get(&terminal_id).map(|session| {
@@ -146,7 +146,7 @@ impl Xssh {
         self.terminal_sessions
             .get(&terminal_id)
             .map(|session| {
-                let terminal_palette = self.active_terminal_theme().palette();
+                let terminal_palette = self.active_terminal_palette();
                 visible_range
                     .filter_map(|row| session.display_line(row))
                     .map(|line| {

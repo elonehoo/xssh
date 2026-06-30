@@ -21,7 +21,15 @@ pub(crate) fn load_app_settings(connection: &mut SqliteConnection) -> Result<App
         return Ok(settings);
     };
 
-    serde_json::from_str(&row.settings_data).context("解析应用设置失败")
+    let settings: AppSettingsData =
+        serde_json::from_str(&row.settings_data).context("解析应用设置失败")?;
+    let normalized = serde_json::to_string(&settings).context("序列化应用设置失败")?;
+
+    if normalized != row.settings_data {
+        save_app_settings(connection, &settings)?;
+    }
+
+    Ok(settings)
 }
 
 pub(crate) fn save_app_settings(

@@ -2,7 +2,7 @@
 
 ## NvChad/base46
 
-Terminal theme color tables in `src/ui/base46.rs` are derived from
+App and terminal theme color tables in `src/ui/base46.rs` are derived from
 https://github.com/NvChad/base46.
 
 The upstream repository includes the following MIT license notices.

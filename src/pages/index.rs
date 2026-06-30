@@ -13,16 +13,14 @@ use std::{collections::HashMap, sync::mpsc::Receiver};
 
 use diesel::sqlite::SqliteConnection;
 use gpui::{Context, Entity, FocusHandle, Subscription, Window, WindowHandle, prelude::*};
-use gpui_component::{
-    Root, Theme as ComponentTheme, ThemeMode as ComponentThemeMode, input::InputState,
-};
+use gpui_component::{Root, input::InputState};
 
 use crate::{
     ipc::{
         AppSettingsData, ServerResource, SshConnectionTestResult, load_app_settings, load_servers,
         open_database, save_app_settings,
     },
-    ui::{Language, TerminalThemeId, TerminalThemeKind, TextKey, ThemeMode},
+    ui::{AppThemeId, Language, TextKey, sync_component_theme},
 };
 
 use tabs::{ActiveTab, OpenTab, TerminalId};
@@ -42,9 +40,7 @@ pub(crate) struct Xssh {
     host_connection_test_receivers:
         HashMap<i32, Receiver<SshConnectionTestResult<HostConnectionTestTarget>>>,
     language: Language,
-    theme: ThemeMode,
-    dark_terminal_theme: TerminalThemeId,
-    light_terminal_theme: TerminalThemeId,
+    theme: AppThemeId,
     search_input: Entity<InputState>,
     sidebar_collapsed: bool,
     create_host_window: Option<WindowHandle<Root>>,
@@ -60,16 +56,8 @@ impl Xssh {
         let servers = load_servers(&mut connection).expect("服务器资源读取失败");
         let app_settings = load_app_settings(&mut connection).expect("应用设置读取失败");
         let language = Language::from_setting_value(&app_settings.language);
-        let theme = ThemeMode::from_setting_value(&app_settings.theme);
-        ComponentTheme::change(Self::component_theme_mode(theme), Some(window), cx);
-        let dark_terminal_theme = TerminalThemeId::from_setting_value(
-            &app_settings.dark_terminal_theme,
-            TerminalThemeKind::Dark,
-        );
-        let light_terminal_theme = TerminalThemeId::from_setting_value(
-            &app_settings.light_terminal_theme,
-            TerminalThemeKind::Light,
-        );
+        let theme = AppThemeId::from_setting_value(&app_settings.app_theme);
+        sync_component_theme(theme, Some(window), cx);
         let search_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(language.tr(TextKey::SearchHosts)));
         let _subscriptions = Vec::new();
@@ -83,8 +71,6 @@ impl Xssh {
             host_connection_test_receivers: HashMap::new(),
             language,
             theme,
-            dark_terminal_theme,
-            light_terminal_theme,
             search_input,
             sidebar_collapsed: false,
             create_host_window: None,
@@ -101,26 +87,16 @@ impl Xssh {
         this
     }
 
-    pub(in crate::pages::index) fn active_terminal_theme(&self) -> TerminalThemeId {
-        match self.theme {
-            ThemeMode::Dark => self.dark_terminal_theme,
-            ThemeMode::Light => self.light_terminal_theme,
-        }
-    }
-
-    pub(in crate::pages::index) fn component_theme_mode(theme: ThemeMode) -> ComponentThemeMode {
-        match theme {
-            ThemeMode::Dark => ComponentThemeMode::Dark,
-            ThemeMode::Light => ComponentThemeMode::Light,
-        }
+    pub(in crate::pages::index) fn active_terminal_palette(
+        &self,
+    ) -> crate::ui::TerminalThemePalette {
+        self.theme.terminal_palette()
     }
 
     fn app_settings_data(&self) -> AppSettingsData {
         AppSettingsData {
             language: self.language.setting_value().to_string(),
-            theme: self.theme.setting_value().to_string(),
-            dark_terminal_theme: self.dark_terminal_theme.as_str().to_string(),
-            light_terminal_theme: self.light_terminal_theme.as_str().to_string(),
+            app_theme: self.theme.as_str().to_string(),
         }
     }
 
