@@ -1,5 +1,5 @@
 use gpui::{
-    Context, Entity, IntoElement, SharedString, WindowControlArea, div, prelude::*, px, rgb,
+    App, Context, Entity, IntoElement, SharedString, WindowControlArea, div, prelude::*, px, rgb,
 };
 
 use crate::ui::{BASE_FONT_SIZE, TextKey, ThemeMode, icons};
@@ -10,6 +10,58 @@ use super::{
 };
 
 impl Xssh {
+    fn tab_close_icon(
+        theme: ThemeMode,
+        id: SharedString,
+        group_name: SharedString,
+        on_close: impl Fn(&mut App) + 'static,
+    ) -> impl IntoElement {
+        let palette = theme.palette();
+        let server_icon_group = group_name.clone();
+
+        div()
+            .id(id)
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(22.))
+            .rounded_sm()
+            .bg(rgb(palette.icon_bg))
+            .hover(move |style| style.bg(rgb(palette.button_bg)))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .left(px(0.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .group_hover(server_icon_group, |style| style.invisible())
+                    .child(icons::server::icon(17., palette.text)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .bottom(px(0.))
+                    .left(px(0.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .invisible()
+                    .group_hover(group_name, |style| style.visible())
+                    .child(icons::close::icon(12., palette.muted)),
+            )
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                on_close(cx);
+            })
+    }
+
     pub(in crate::pages::index) fn local_terminal_tab(
         &self,
         active: bool,
@@ -48,27 +100,17 @@ impl Xssh {
             } else {
                 rgb(palette.muted)
             })
-            .child(Self::server_icon(self.theme).into_any_element())
+            .child(Self::tab_close_icon(
+                self.theme,
+                SharedString::from("close-tab-local-terminal"),
+                group_name,
+                move |cx| {
+                    view_for_close.update(cx, |this, cx| {
+                        this.close_local_terminal_tab(cx);
+                    });
+                },
+            ))
             .child(div().min_w(px(0.)).max_w(px(150.)).truncate().child(label))
-            .child(
-                div()
-                    .id("close-tab-local-terminal")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(18.))
-                    .rounded_sm()
-                    .invisible()
-                    .group_hover(group_name, |style| style.visible())
-                    .hover(move |style| style.bg(rgb(palette.button_bg)))
-                    .child(icons::close::icon(12., palette.muted))
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        view_for_close.update(cx, |this, cx| {
-                            this.close_local_terminal_tab(cx);
-                        });
-                    }),
-            )
             .hover(move |style| {
                 style
                     .bg(rgb(palette.panel_hover))
@@ -121,27 +163,17 @@ impl Xssh {
             } else {
                 rgb(palette.muted)
             })
-            .child(Self::server_icon(self.theme).into_any_element())
+            .child(Self::tab_close_icon(
+                self.theme,
+                SharedString::from(format!("close-tab-{server_id}")),
+                group_name,
+                move |cx| {
+                    view_for_close.update(cx, |this, cx| {
+                        this.close_server_tab(server_id, cx);
+                    });
+                },
+            ))
             .child(div().min_w(px(0.)).max_w(px(210.)).truncate().child(label))
-            .child(
-                div()
-                    .id(SharedString::from(format!("close-tab-{server_id}")))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(18.))
-                    .rounded_sm()
-                    .invisible()
-                    .group_hover(group_name, |style| style.visible())
-                    .hover(move |style| style.bg(rgb(palette.button_bg)))
-                    .child(icons::close::icon(12., palette.muted))
-                    .on_click(move |_, _, cx| {
-                        cx.stop_propagation();
-                        view_for_close.update(cx, |this, cx| {
-                            this.close_server_tab(server_id, cx);
-                        });
-                    }),
-            )
             .hover(move |style| {
                 style
                     .bg(rgb(palette.panel_hover))
