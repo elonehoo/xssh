@@ -1,5 +1,6 @@
 use gpui::{
-    App, Context, Entity, IntoElement, SharedString, WindowControlArea, div, prelude::*, px, rgb,
+    App, Context, Entity, IntoElement, MouseButton, MouseMoveEvent, SharedString, Window,
+    WindowControlArea, div, prelude::*, px, rgb,
 };
 
 use crate::ui::{TextKey, ThemeMode, icons};
@@ -9,7 +10,30 @@ use super::{
     tabs::{ActiveTab, OpenTab},
 };
 
+#[derive(Default)]
+struct TitlebarDragState {
+    should_move_window: bool,
+}
+
 impl Xssh {
+    fn titlebar_drag_space(
+        width: Option<f32>,
+        drag_state: Entity<TitlebarDragState>,
+        window: &mut Window,
+    ) -> impl IntoElement {
+        div()
+            .h_full()
+            .window_control_area(WindowControlArea::Drag)
+            .when_some(width, |this, width| this.flex_none().w(px(width)))
+            .when(width.is_none(), |this| this.flex_1())
+            .on_mouse_down(
+                MouseButton::Left,
+                window.listener_for(&drag_state, |state, _, _, _| {
+                    state.should_move_window = true;
+                }),
+            )
+    }
+
     fn tab_close_icon(
         theme: ThemeMode,
         id: SharedString,
@@ -187,15 +211,21 @@ impl Xssh {
             })
     }
 
-    pub(in crate::pages::index) fn titlebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(in crate::pages::index) fn titlebar(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let view = cx.entity();
         let language = self.language;
         let palette = self.theme.palette();
-        let open_tabs = self
-            .open_tabs
-            .clone()
-            .into_iter()
-            .map(|tab| match tab {
+        let drag_state = window.use_state(cx, |_, _| TitlebarDragState::default());
+        let mut open_tabs = Vec::new();
+        for tab in self.open_tabs.clone() {
+            open_tabs.push(
+                Self::titlebar_drag_space(Some(8.), drag_state.clone(), window).into_any_element(),
+            );
+            open_tabs.push(match tab {
                 OpenTab::LocalTerminal => self
                     .local_terminal_tab(self.active_tab == ActiveTab::LocalTerminal, view.clone())
                     .into_any_element(),
@@ -204,8 +234,8 @@ impl Xssh {
                     self.title_tab(server.id, server.name, active, view.clone())
                         .into_any_element()
                 }
-            })
-            .collect::<Vec<_>>();
+            });
+        }
 
         div()
             .flex()
@@ -213,13 +243,38 @@ impl Xssh {
             .items_center()
             .h(px(36.))
             .w_full()
-            .pl(px(92.))
-            .pr_3()
-            .gap_2()
             .bg(rgb(palette.titlebar_bg))
             .border_b_1()
             .border_color(rgb(palette.border))
+            .on_mouse_down_out(window.listener_for(&drag_state, |state, _, _, _| {
+                state.should_move_window = false;
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                window.listener_for(&drag_state, |state, _, _, _| {
+                    state.should_move_window = false;
+                }),
+            )
+            .on_mouse_move(window.listener_for(
+                &drag_state,
+                |state, event: &MouseMoveEvent, window, _| {
+                    if state.should_move_window && event.dragging() {
+                        state.should_move_window = false;
+                        window.start_window_move();
+                    }
+                },
+            ))
+            .child(Self::titlebar_drag_space(
+                Some(92.),
+                drag_state.clone(),
+                window,
+            ))
             .child(self.sidebar_toggle(view.clone()))
+            .child(Self::titlebar_drag_space(
+                Some(8.),
+                drag_state.clone(),
+                window,
+            ))
             .child(
                 div()
                     .id("vault-tab")
@@ -247,6 +302,11 @@ impl Xssh {
                     .hover(move |style| style.bg(rgb(palette.tab_active)))
                     .on_click(cx.listener(Self::on_vault_tab)),
             )
+            .child(Self::titlebar_drag_space(
+                Some(8.),
+                drag_state.clone(),
+                window,
+            ))
             .child(
                 div()
                     .h(px(18.))
@@ -254,12 +314,12 @@ impl Xssh {
                     .bg(rgb(palette.border))
                     .opacity(0.65),
             )
+            .child(Self::titlebar_drag_space(
+                Some(8.),
+                drag_state.clone(),
+                window,
+            ))
             .children(open_tabs)
-            .child(
-                div()
-                    .flex_1()
-                    .h_full()
-                    .window_control_area(WindowControlArea::Drag),
-            )
+            .child(Self::titlebar_drag_space(None, drag_state, window))
     }
 }

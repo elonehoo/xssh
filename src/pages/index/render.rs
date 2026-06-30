@@ -28,7 +28,7 @@ impl Render for Xssh {
             .bg(rgb(palette.app_bg))
             .text_size(px(BASE_FONT_SIZE))
             .text_color(rgb(palette.text))
-            .child(self.titlebar(cx))
+            .child(self.titlebar(window, cx))
             .child(
                 div()
                     .flex_1()
