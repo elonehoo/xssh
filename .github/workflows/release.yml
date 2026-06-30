@@ -199,14 +199,9 @@ jobs:
             git push origin "$TAG"
           fi
 
-          RELEASE_FLAGS=()
-          if [[ "$PRERELEASE" == "true" ]]; then
-            RELEASE_FLAGS+=(--prerelease)
-          fi
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$DMG_PATH" "$CHECKSUM_PATH" "$APPCAST_PATH" --clobber
-          else
+          elif [[ "$PRERELEASE" == "true" ]]; then
             gh release create "$TAG" \
               "$DMG_PATH" \
               "$CHECKSUM_PATH" \
@@ -214,5 +209,13 @@ jobs:
               --target "$GITHUB_SHA" \
               --title "XSSH $VERSION" \
               --notes "macOS signed and notarized release." \
-              "${RELEASE_FLAGS[@]}"
+              --prerelease
+          else
+            gh release create "$TAG" \
+              "$DMG_PATH" \
+              "$CHECKSUM_PATH" \
+              "$APPCAST_PATH" \
+              --target "$GITHUB_SHA" \
+              --title "XSSH $VERSION" \
+              --notes "macOS signed and notarized release."
           fi
